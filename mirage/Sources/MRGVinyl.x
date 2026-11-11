@@ -13,6 +13,12 @@
 // 0.5.1 kept the tilt view in an unretained reference on the cell; a tilt view Spotify rebuilt left it pointing at
 // freed memory, and the next pass crashed. Nothing here holds a Spotify view strongly or unretained: the record is
 // stored on the tilt view itself and holds it weakly.
+//
+// 0.5.3: the sleeve plus the record showing past it now fill Now Playing's art row. 0.5.2 shrank the cover to 70% of the
+// tilt view and fit the record inside the tilt view's own width, which left a small cover and empty space at the sides.
+// Now the piece is sized from the cover cell's width (a small side margin kept) and the record peeks out less, so the
+// cover is as big as the row allows; it is never taller than Spotify's own art (no overlap with the title or lyrics
+// below), stays square, and the record stays centered on it vertically and scales with it.
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
 #import <QuartzCore/QuartzCore.h>
@@ -21,10 +27,11 @@
 #import "MRGPlayer.h"
 #import "MRGDJLog.h"
 
-static const CGFloat kCoverScale = 0.70;   // the sleeve, of the tilt view's size
-static const CGFloat kPeek = 0.42;          // how much record shows past the sleeve, of the sleeve's width
+static const CGFloat kPeek = 0.30;          // how much record shows past the sleeve, of the sleeve's width
+static const CGFloat kMargin = 12;          // the piece's side margin in the cover cell (never wider than stock art)
+static const CGFloat kMinCover = 0.55;      // the sleeve never gets smaller than this, of the tilt view's size
 static const CGFloat kDisc = 0.92;          // the record's diameter, of the sleeve's width
-static char kVinylKey, kOursKey, kClipKey;
+static char kVinylKey, kOursKey, kClipKey, kUnclippedKey;
 static CFTimeInterval sg_glideUntil;   // right after the add-on or its side changed: the cover glides, else it is set
 
 static Class tiltClass(void) {
@@ -382,10 +389,49 @@ static void restore(UIView *tilt) {
     }
     NSNumber *clip = objc_getAssociatedObject(tilt, &kClipKey);
     if (clip) tilt.clipsToBounds = clip.boolValue;
+    NSHashTable *unclipped = objc_getAssociatedObject(tilt, &kUnclippedKey);
+    for (UIView *v in unclipped.allObjects) v.clipsToBounds = YES;
+    objc_setAssociatedObject(tilt, &kUnclippedKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     [vinyl removeFromSuperview];
     objc_setAssociatedObject(tilt, &kVinylKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(tilt, &kOursKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(tilt, &kClipKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+
+// The sleeve's scale (of the tilt view) and its shift, in the tilt view's superview. The room is the cover cell's width
+// less a small margin each side, but never less than the tilt view's own extent (stock art width) and never wider than
+// the window; the sleeve plus the record peeking past it fill that room. The sleeve is never taller than the tilt view,
+// so it can't reach the title, controls or lyrics below. Sizes only (no positions on screen), so a swipe between songs or
+// pulling the player down never changes it mid-move.
+static void vinylFit(UIView *tilt, CGFloat *outScale, CGFloat *outTx, CGFloat dir) {
+    CGSize S = tilt.bounds.size;
+    CGFloat side = MIN(S.width, S.height);
+    UIView *sup = tilt.superview;
+    CGPoint c = tilt.center;
+    CGFloat minX = c.x - S.width / 2, maxX = c.x + S.width / 2;   // stock art, unscaled
+    UIView *cell = nil;
+    Class cc = cellClass();
+    for (UIView *p = tilt.superview; p && cc; p = p.superview) if ([p isKindOfClass:cc]) { cell = p; break; }
+    if (cell && sup) {
+        CGRect r = [cell convertRect:cell.bounds toView:sup];
+        if (isfinite(r.origin.x) && isfinite(r.size.width) && r.size.width > 0) {
+            CGFloat w = r.size.width;
+            CGFloat win = tilt.window ? tilt.window.bounds.size.width : UIScreen.mainScreen.bounds.size.width;
+            if (win > 0) w = MIN(w, win);
+            w -= 2 * kMargin;
+            CGFloat mid = CGRectGetMidX(r);
+            minX = MIN(minX, mid - w / 2);
+            maxX = MAX(maxX, mid + w / 2);
+        }
+    }
+    CGFloat room = maxX - minX;
+    CGFloat cover = MIN(side, room / (1 + kPeek));
+    cover = MAX(cover, side * kMinCover);
+    cover = round(cover * 2) / 2;
+    CGFloat pieceMid = (minX + maxX) / 2;
+    CGFloat coverMid = pieceMid - dir * cover * kPeek / 2;
+    *outScale = cover / side;
+    *outTx = round((coverMid - c.x) * 2) / 2;
 }
 
 static void MRGVinylApply(UIView *tilt) {
@@ -399,9 +445,11 @@ static void MRGVinylApply(UIView *tilt) {
         CGFloat side = MIN(S.width, S.height);
         if (side < 150 || !isfinite(side)) return;
         CGFloat dir = MRGVinylOnLeft() ? -1 : 1;
-        // In the superview: the sleeve plus the record showing make one centered piece.
-        CGFloat cover = side * kCoverScale, peek = cover * kPeek;
-        CGAffineTransform t = CGAffineTransformMake(kCoverScale, 0, 0, kCoverScale, -dir * peek / 2, 0);
+        // In the superview: the sleeve plus the record showing make one piece, centered in the cover cell's width.
+        CGFloat scale = 0, tx = 0;
+        vinylFit(tilt, &scale, &tx, dir);
+        CGFloat cover = side * scale;
+        CGAffineTransform t = CGAffineTransformMake(scale, 0, 0, scale, tx, 0);
         NSValue *ours = objc_getAssociatedObject(tilt, &kOursKey);
         CGAffineTransform now = tilt.transform;
         BOOL mine = CGAffineTransformIsIdentity(now) || (ours && CGAffineTransformEqualToTransform(now, ours.CGAffineTransformValue));
@@ -420,6 +468,16 @@ static void MRGVinylApply(UIView *tilt) {
             if (!objc_getAssociatedObject(tilt, &kClipKey)) objc_setAssociatedObject(tilt, &kClipKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
             tilt.clipsToBounds = NO;
             logState(@"the cover clipped its edges; unclipped for the record");
+        }
+        // The bigger piece can reach past the tilt view's own width, so the views between it and the cover cell must not
+        // clip the record either. Held weakly; clipped again when the add-on is turned off.
+        Class cc = cellClass();
+        for (UIView *p = tilt.superview; p && cc && ![p isKindOfClass:cc]; p = p.superview) {
+            if (!p.clipsToBounds) continue;
+            NSHashTable *unclipped = objc_getAssociatedObject(tilt, &kUnclippedKey);
+            if (!unclipped) { unclipped = [NSHashTable weakObjectsHashTable]; objc_setAssociatedObject(tilt, &kUnclippedKey, unclipped, OBJC_ASSOCIATION_RETAIN_NONATOMIC); }
+            [unclipped addObject:p];
+            p.clipsToBounds = NO;
         }
 
         MRGVinylView *vinyl = objc_getAssociatedObject(tilt, &kVinylKey);
@@ -444,7 +502,7 @@ static void MRGVinylApply(UIView *tilt) {
             vinyl.alpha = 0;
             [UIView animateWithDuration:0.35 animations:^{ vinyl.alpha = 1; }];
         }
-        logState([NSString stringWithFormat:@"on, cover %.0fpt, record inside it on the %@", side, dir > 0 ? @"right" : @"left"]);
+        logState([NSString stringWithFormat:@"on, art %.0fpt, sleeve %.0fpt, record peeking %.0fpt on the %@", side, cover, cover * kPeek, dir > 0 ? @"right" : @"left"]);
     } @catch (NSException *e) {
         MRGDJLog(@"vinyl: layout threw %@, Now Playing stays stock", e.reason);
         @try { restore(tilt); } @catch (NSException *e2) {}

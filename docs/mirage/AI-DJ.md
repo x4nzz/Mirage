@@ -2,6 +2,13 @@
 
 Mirage DJ, added in 0.2.0, plans a set and picks about 15 tracks that suit what you've been listening to and what you ask for, and plays them in Spotify's own player. Between tracks it says a short line, the way a radio DJ would, in the persona you choose. Since 0.3.0 you can also chat with it: ask about your listening, have it play or queue songs, and create or change playlists. The words come from an AI provider you choose, using your own API key.
 
+## What's new in 0.5.3 (bigger Vinyl)
+
+- **Vinyl fills Now Playing.** The cover and the record peeking out now span the whole art row (a 12pt margin each
+  side) instead of a 70% cover inside Spotify's art box. The cover stays square and never taller than Spotify's own art,
+  so it can't cover the title or lyrics; the record scales with it, stays centered on it and peeks out a little less
+  (30% of the cover). Spin speeds, the side setting and 0.5.2's crash and animation fixes are unchanged.
+
 ## What's new in 0.5.2 (crash fix, no made-up facts, smoother Vinyl)
 
 - **Vinyl crash fixed.** 0.5.1 kept an unretained pointer to the cover view on its cell; when Spotify rebuilt the cover
