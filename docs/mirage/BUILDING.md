@@ -9,7 +9,7 @@ Mirage is a fork of [Vitrine](https://github.com/meownyaaa/vitrine). The repo bu
 
 `scripts/mirage-build.sh <decrypted Spotify.ipa>` builds both and injects them into the IPA with
 [cyan](https://github.com/asdfzxcvbn/pyzule-rw), fakesigned, ready for Ksign or SideStore.
-The output goes to `out/Mirage-<spotify version>.ipa`, `out/Mirage.dylib` and `out/com.x4nzz.mirage_*.deb`.
+The output goes to `out/Mirage-<mirage version>-<spotify version>.ipa`, `out/Mirage.dylib` and `out/com.x4nzz.mirage_*.deb`.
 
 ## On Linux
 

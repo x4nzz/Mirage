@@ -2,6 +2,19 @@
 
 Mirage DJ, added in 0.2.0, plans a set and picks about 15 tracks that suit what you've been listening to and what you ask for, and plays them in Spotify's own player. Between tracks it says a short line, the way a radio DJ would, in the persona you choose. Since 0.3.0 you can also chat with it: ask about your listening, have it play or queue songs, and create or change playlists. The words come from an AI provider you choose, using your own API key.
 
+## What's new in 0.5.4 (Vinyl really bigger)
+
+- **Vinyl is much bigger.** 0.5.3 still kept the cover inside Spotify's art size with a 30% peek, so on a phone it
+  barely changed. Now the cover and the record peeking past it (20% of the cover) span the screen less 12pt each side,
+  centered: about a 305pt cover (78% of a 390pt iPhone) with 61pt of record showing. It may be bigger than Spotify's own
+  art but never taller than the cover's row, so it stays off the title. Paused, it shrinks only as much as stock does.
+  The DJ log's `vinyl: on, …` line lists the measured sizes and the cover's frame on screen.
+- **The record stays with the cover when you pull the player down.** It used to lose track of the cover once Spotify
+  shrank it for the dismiss and was left behind full size. It now follows the cover's real position and size every
+  frame (pulling down, the paused shrink, swiping between songs) and fades with it.
+- **Builds are named with the Mirage version** (`out/Mirage-0.5.4-9.1.90.ipa`), so a new build is never mistaken for an
+  older one with the same name in Ksign or LiveContainer. Replace (or delete) the old app before installing.
+
 ## What's new in 0.5.3 (bigger Vinyl)
 
 - **Vinyl fills Now Playing.** The cover and the record peeking out now span the whole art row (a 12pt margin each

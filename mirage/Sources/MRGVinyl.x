@@ -6,6 +6,10 @@
 // Spotify's tree (from Vitrine's notes): CoverArtCellImpl > UIView > UIView > CoverArtTiltView (≥200pt in the player,
 // 40pt in the bar) > the cover (an ElementView the tilt view's size; Vitrine scales it down while paused).
 //
+// 0.5.4: the record follows where the cover really is every frame (its presentation layer, read in the tilt view's
+// space), not just the cover's transform, and keeps following the same cover whatever its size. 0.5.2/0.5.3 lost the
+// cover when Spotify shrank its frame to dismiss the player, so the record was left behind full size while the sheet
+// was pulled down.
 // 0.5.2: the record lives inside the tilt view, below the cover, so it moves, fades and animates with the cover in
 // every transition (opening and closing the player, the swipe between songs, pulling the player down). The tilt view's
 // own scale and shift carry it too. When the cover itself is scaled (Vitrine's paused shrink), the record copies that
@@ -14,6 +18,8 @@
 // freed memory, and the next pass crashed. Nothing here holds a Spotify view strongly or unretained: the record is
 // stored on the tilt view itself and holds it weakly.
 //
+// 0.5.4: bigger again (0.5.3 never let the sleeve outgrow Spotify's art and peeked 30%, so on a phone it barely changed):
+// the sleeve plus a 20% peek span the screen less 12pt each side, about a 305pt cover on a 390pt iPhone (78%).
 // 0.5.3: the sleeve plus the record showing past it now fill Now Playing's art row. 0.5.2 shrank the cover to 70% of the
 // tilt view and fit the record inside the tilt view's own width, which left a small cover and empty space at the sides.
 // Now the piece is sized from the cover cell's width (a small side margin kept) and the record peeks out less, so the
@@ -27,8 +33,8 @@
 #import "MRGPlayer.h"
 #import "MRGDJLog.h"
 
-static const CGFloat kPeek = 0.30;          // how much record shows past the sleeve, of the sleeve's width
-static const CGFloat kMargin = 12;          // the piece's side margin in the cover cell (never wider than stock art)
+static const CGFloat kPeek = 0.20;          // how much record shows past the sleeve, of the sleeve's width
+static const CGFloat kMargin = 12;          // the piece's side margin on screen
 static const CGFloat kMinCover = 0.55;      // the sleeve never gets smaller than this, of the tilt view's size
 static const CGFloat kDisc = 0.92;          // the record's diameter, of the sleeve's width
 static char kVinylKey, kOursKey, kClipKey, kUnclippedKey;
@@ -105,8 +111,9 @@ static void logState(NSString *state) {
     double _turn;
     BOOL _spinning, _built, _followed;
     CGFloat _builtSide;
-    CGAffineTransform _lastCover;
-    CGPoint _lastCenter;
+    __weak UIView *_cover;      // the cover being followed, held weakly
+    CGAffineTransform _lastM;
+    float _lastOpacity;
 }
 
 - (instancetype)initWithFrame:(CGRect)frame {
@@ -116,7 +123,8 @@ static void logState(NSString *state) {
     self.layer.shadowOpacity = 0.5;
     self.layer.shadowRadius = 16;
     self.layer.shadowOffset = CGSizeMake(0, 8);
-    _lastCover = CGAffineTransformIdentity;
+    _lastM = CGAffineTransformIdentity;
+    _lastOpacity = 1;
     _disc = [CALayer layer];
     _base = [CAGradientLayer layer];
     _base.type = kCAGradientLayerRadial;
@@ -291,55 +299,67 @@ static UIView *coverIn(UIView *tilt) {
     return best;
 }
 
-// The cover's transform, applied about the cover's center: the record shrinks toward the same point and stays tucked
-// behind it. Linear part the same; translation so that cc + A(p - cc) = vc + M(p - vc).
-static CGAffineTransform followTransform(CGAffineTransform A, CGPoint cc, CGPoint vc) {
-    CGFloat dx = vc.x - cc.x, dy = vc.y - cc.y;
-    CGFloat ax = A.a * dx + A.c * dy, ay = A.b * dx + A.d * dy;
-    return CGAffineTransformMake(A.a, A.b, A.c, A.d, cc.x - vc.x + ax + A.tx, cc.y - vc.y + ay + A.ty);
+// 0.5.4: the cover being followed. 0.5.2 looked it up every frame by size (at least 80% of the tilt view), so when
+// Spotify shrank the cover's own frame to dismiss the player (pulling it down) or when it was mid-shrink, the lookup
+// failed, the record fell back to no transform and was left behind at full size. Now the cover is found once and kept
+// (weakly) whatever its size, until it leaves this tilt view's window or turns up in another cover's tilt view.
+- (UIView *)trackedCover {
+    UIView *tilt = self.tilt, *c = _cover;
+    if (c && c.window && c.window == tilt.window && c != self) {
+        Class tc = tiltClass();
+        UIView *owner = nil;
+        for (UIView *p = c.superview; p; p = p.superview) if (tc && [p isKindOfClass:tc]) { owner = p; break; }
+        if (!owner || owner == tilt) return c;
+    }
+    c = coverIn(tilt);
+    if (c) _cover = c;
+    return c;
 }
 
-// Every frame: follow the cover's own transform, with its animation when it has one.
+// Every frame: where the cover really is right now (its presentation layer, so any animation counts: Spotify's dismiss
+// and its frame or spring changes, Vitrine's paused shrink, a swipe between songs), read in the tilt view's own space,
+// and the record placed the same way relative to it. In the tilt view's unscaled space the stock cover is a square of the
+// tilt view's side centered in it (the record is laid out against that); whatever maps that square onto the cover now
+// is applied to the record about its own center. The record stays a subview of the tilt view, inside the player's
+// sheet, so everything the sheet and the tilt view do carries it too; nothing is in window or screen coordinates.
 - (void)frame:(CADisplayLink *)link {
     @try {
         UIView *tilt = self.tilt;
         if (!tilt || self.superview != tilt) return;
-        UIView *cover = coverIn(tilt);
-        CGAffineTransform A = cover ? cover.transform : CGAffineTransformIdentity;
-        BOOL moved = !CGPointEqualToPoint(self.center, _lastCenter);
-        if (!_followed || moved || !CGAffineTransformEqualToTransform(A, _lastCover)) {
-            BOOL first = !_followed || (moved && CGAffineTransformEqualToTransform(A, _lastCover));
-            _lastCenter = self.center;
+        UIView *cover = [self trackedCover];
+        if (!cover) return;   // nothing to follow this frame: stays where it was
+        CALayer *cl = (CALayer *)cover.layer.presentationLayer ?: cover.layer;
+        CALayer *tl = (CALayer *)tilt.layer.presentationLayer ?: tilt.layer;
+        CGRect cb = cl.bounds;
+        CGPoint m = CGPointMake(CGRectGetMidX(cb), CGRectGetMidY(cb));
+        CGPoint P0 = [cl convertPoint:m toLayer:tl];
+        CGPoint Px = [cl convertPoint:CGPointMake(m.x + cb.size.width / 2, m.y) toLayer:tl];
+        CGPoint Py = [cl convertPoint:CGPointMake(m.x, m.y + cb.size.height / 2) toLayer:tl];
+        CGSize S = tilt.bounds.size;
+        CGFloat half = MIN(S.width, S.height) / 2;
+        if (half < 1 || !isfinite(P0.x) || !isfinite(Px.x) || !isfinite(Py.y)) return;
+        // Linear part: the stock cover's half-axes onto the cover's half-axes now. A square cover keeps the record round.
+        CGFloat a = (Px.x - P0.x) / half, b = (Px.y - P0.y) / half, c = (Py.x - P0.x) / half, d = (Py.y - P0.y) / half;
+        if (!isfinite(a) || !isfinite(d) || fabs(a * d - b * c) < 1e-4) return;
+        // The stock cover's center (cc0) goes to P0; the record turns about its own center vc:
+        // vc + L(p - vc) + T = P0 + L(p - cc0)  =>  T = P0 - vc + L(vc - cc0).
+        CGPoint cc0 = CGPointMake(S.width / 2, S.height / 2), vc = self.center;
+        CGFloat dx = vc.x - cc0.x, dy = vc.y - cc0.y;
+        CGAffineTransform M = CGAffineTransformMake(a, b, c, d, P0.x - vc.x + a * dx + c * dy, P0.y - vc.y + b * dx + d * dy);
+        float op = cl.opacity;
+        CGFloat q = 0.25;   // ignore sub-quarter-point jitter
+        BOOL same = fabs(M.a - _lastM.a) < 1e-4 && fabs(M.b - _lastM.b) < 1e-4 && fabs(M.c - _lastM.c) < 1e-4 && fabs(M.d - _lastM.d) < 1e-4
+            && fabs(M.tx - _lastM.tx) < q && fabs(M.ty - _lastM.ty) < q && fabs(op - _lastOpacity) < 0.01 && _followed;
+        if (!same) {
             _followed = YES;
-            _lastCover = A;
-            CGAffineTransform M = cover ? followTransform(A, cover.center, self.center) : CGAffineTransformIdentity;
-            CAAnimation *theirs = nil;
-            for (NSString *k in cover.layer.animationKeys ?: @[]) {
-                CAAnimation *an = [cover.layer animationForKey:k];
-                if ([an isKindOfClass:CABasicAnimation.class] && [((CABasicAnimation *)an).keyPath isEqualToString:@"transform"]) { theirs = an; break; }
-            }
-            CATransform3D from = ((CALayer *)self.layer.presentationLayer ?: self.layer).transform;
+            _lastM = M;
+            _lastOpacity = op;
             [CATransaction begin];
             [CATransaction setDisableActions:YES];
+            [self.layer removeAnimationForKey:@"mrg.follow"];
             self.transform = M;
+            self.layer.opacity = op;
             [CATransaction commit];
-            if (theirs && !first) {
-                CABasicAnimation *mine = [theirs copy];   // same duration, timing, spring and start time
-                mine.keyPath = @"transform";
-                mine.additive = NO;
-                mine.fromValue = [NSValue valueWithCATransform3D:from];
-                mine.toValue = [NSValue valueWithCATransform3D:CATransform3DMakeAffineTransform(M)];
-                mine.removedOnCompletion = YES;
-                mine.fillMode = kCAFillModeBackwards;
-                [self.layer addAnimation:mine forKey:@"mrg.follow"];
-            } else if (!first && self.window) {
-                CABasicAnimation *mine = [CABasicAnimation animationWithKeyPath:@"transform"];
-                mine.fromValue = [NSValue valueWithCATransform3D:from];
-                mine.toValue = [NSValue valueWithCATransform3D:CATransform3DMakeAffineTransform(M)];
-                mine.duration = 0.3;
-                mine.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut];
-                [self.layer addAnimation:mine forKey:@"mrg.follow"];
-            }
         }
         if (++_frames % 30 == 0) [self slowTick];
     } @catch (NSException *e) {
@@ -352,7 +372,7 @@ static CGAffineTransform followTransform(CGAffineTransform A, CGPoint cc, CGPoin
         if (!self.window) return;
         if (!_disc.animationKeys.count) [self startSpin];
         [self setSpinning:MRGPlayerIsPlaying()];
-        UIImage *img = coverImage(coverIn(self.tilt) ?: self.tilt, 0);
+        UIImage *img = coverImage([self trackedCover] ?: self.tilt, 0);
         if (img && img != _shownImage && img.CGImage) {
             _shownImage = img;
             _label.contents = (__bridge id)img.CGImage;
@@ -398,40 +418,46 @@ static void restore(UIView *tilt) {
     objc_setAssociatedObject(tilt, &kClipKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
-// The sleeve's scale (of the tilt view) and its shift, in the tilt view's superview. The room is the cover cell's width
-// less a small margin each side, but never less than the tilt view's own extent (stock art width) and never wider than
-// the window; the sleeve plus the record peeking past it fill that room. The sleeve is never taller than the tilt view,
-// so it can't reach the title, controls or lyrics below. Sizes only (no positions on screen), so a swipe between songs or
+// The sleeve's scale (of the tilt view) and its shift, in the tilt view's superview. 0.5.4: the room is the screen's
+// width (or the cover cell's, if narrower) less kMargin each side, and the sleeve plus the record peeking past it fill all
+// of it, centered: about a 305pt cover and a 61pt peek on a 390pt iPhone. Unlike 0.5.3 the sleeve may be bigger than
+// Spotify's own art; it is only kept from growing past the vertical room the cover cell gives it (at least the stock
+// art's height), so it never reaches the title row. Sizes only (no positions on screen), so a swipe between songs or
 // pulling the player down never changes it mid-move.
-static void vinylFit(UIView *tilt, CGFloat *outScale, CGFloat *outTx, CGFloat dir) {
+typedef struct { CGFloat scale, tx, cover, room, cellW, winW, vroom; } MRGVinylFitInfo;
+static MRGVinylFitInfo vinylFit(UIView *tilt, CGFloat dir) {
+    MRGVinylFitInfo f = {0};
     CGSize S = tilt.bounds.size;
     CGFloat side = MIN(S.width, S.height);
     UIView *sup = tilt.superview;
     CGPoint c = tilt.center;
-    CGFloat minX = c.x - S.width / 2, maxX = c.x + S.width / 2;   // stock art, unscaled
+    f.winW = tilt.window ? tilt.window.bounds.size.width : UIScreen.mainScreen.bounds.size.width;
+    CGFloat mid = c.x, w = f.winW;
+    f.vroom = side;
     UIView *cell = nil;
     Class cc = cellClass();
     for (UIView *p = tilt.superview; p && cc; p = p.superview) if ([p isKindOfClass:cc]) { cell = p; break; }
     if (cell && sup) {
         CGRect r = [cell convertRect:cell.bounds toView:sup];
-        if (isfinite(r.origin.x) && isfinite(r.size.width) && r.size.width > 0) {
-            CGFloat w = r.size.width;
-            CGFloat win = tilt.window ? tilt.window.bounds.size.width : UIScreen.mainScreen.bounds.size.width;
-            if (win > 0) w = MIN(w, win);
-            w -= 2 * kMargin;
-            CGFloat mid = CGRectGetMidX(r);
-            minX = MIN(minX, mid - w / 2);
-            maxX = MAX(maxX, mid + w / 2);
+        if (isfinite(r.origin.x) && isfinite(r.size.width) && r.size.width > 0 && isfinite(r.size.height)) {
+            f.cellW = r.size.width;
+            if (w <= 0 || r.size.width < w) w = r.size.width;
+            mid = CGRectGetMidX(r);
+            CGFloat up = c.y - CGRectGetMinY(r), down = CGRectGetMaxY(r) - c.y;
+            if (up > 0 && down > 0) f.vroom = MAX(side, 2 * MIN(up, down));
         }
     }
-    CGFloat room = maxX - minX;
-    CGFloat cover = MIN(side, room / (1 + kPeek));
+    if (w <= 0) w = S.width + 2 * kMargin;
+    f.room = w - 2 * kMargin;
+    CGFloat cover = f.room / (1 + kPeek);
+    cover = MIN(cover, f.vroom);
     cover = MAX(cover, side * kMinCover);
     cover = round(cover * 2) / 2;
-    CGFloat pieceMid = (minX + maxX) / 2;
-    CGFloat coverMid = pieceMid - dir * cover * kPeek / 2;
-    *outScale = cover / side;
-    *outTx = round((coverMid - c.x) * 2) / 2;
+    f.cover = cover;
+    CGFloat coverMid = mid - dir * cover * kPeek / 2;
+    f.scale = cover / side;
+    f.tx = round((coverMid - c.x) * 2) / 2;
+    return f;
 }
 
 static void MRGVinylApply(UIView *tilt) {
@@ -446,10 +472,9 @@ static void MRGVinylApply(UIView *tilt) {
         if (side < 150 || !isfinite(side)) return;
         CGFloat dir = MRGVinylOnLeft() ? -1 : 1;
         // In the superview: the sleeve plus the record showing make one piece, centered in the cover cell's width.
-        CGFloat scale = 0, tx = 0;
-        vinylFit(tilt, &scale, &tx, dir);
-        CGFloat cover = side * scale;
-        CGAffineTransform t = CGAffineTransformMake(scale, 0, 0, scale, tx, 0);
+        MRGVinylFitInfo fit = vinylFit(tilt, dir);
+        CGFloat cover = fit.cover;
+        CGAffineTransform t = CGAffineTransformMake(fit.scale, 0, 0, fit.scale, fit.tx, 0);
         NSValue *ours = objc_getAssociatedObject(tilt, &kOursKey);
         CGAffineTransform now = tilt.transform;
         BOOL mine = CGAffineTransformIsIdentity(now) || (ours && CGAffineTransformEqualToTransform(now, ours.CGAffineTransformValue));
@@ -502,7 +527,8 @@ static void MRGVinylApply(UIView *tilt) {
             vinyl.alpha = 0;
             [UIView animateWithDuration:0.35 animations:^{ vinyl.alpha = 1; }];
         }
-        logState([NSString stringWithFormat:@"on, art %.0fpt, sleeve %.0fpt, record peeking %.0fpt on the %@", side, cover, cover * kPeek, dir > 0 ? @"right" : @"left"]);
+        CGRect tf = tilt.window ? [tilt.superview convertRect:tilt.frame toView:nil] : CGRectZero;
+        logState([NSString stringWithFormat:@"on, art %.0fx%.0fpt, window %.0fpt, cell %.0fpt, room %.0fpt, vroom %.0fpt -> sleeve %.0fpt (x%.3f, shift %.1f), record %.0fpt peeking %.0fpt on the %@; sleeve on screen {%.0f,%.0f %.0fx%.0f}", S.width, S.height, fit.winW, fit.cellW, fit.room, fit.vroom, cover, fit.scale, fit.tx, side * kDisc * fit.scale, cover * kPeek, dir > 0 ? @"right" : @"left", tf.origin.x, tf.origin.y, tf.size.width, tf.size.height]);
     } @catch (NSException *e) {
         MRGDJLog(@"vinyl: layout threw %@, Now Playing stays stock", e.reason);
         @try { restore(tilt); } @catch (NSException *e2) {}

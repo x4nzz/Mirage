@@ -1,10 +1,10 @@
 # Installing Mirage with Ksign
 
-`Mirage-9.1.90.ipa` is Spotify 9.1.90 with **Vitrine** and **Mirage** injected. It is unsigned (fakesigned),
+`Mirage-<version>-9.1.90.ipa` (for example `Mirage-0.5.4-9.1.90.ipa`) is Spotify 9.1.90 with **Vitrine** and **Mirage** injected. It is unsigned (fakesigned),
 so Ksign signs it with your own certificate.
 
 1. Get the IPA onto the iPhone. AirDrop it, save it to Files, or open a download link in Safari.
-2. Open **Ksign**, then **Files** (or **Import**), and pick `Mirage-9.1.90.ipa`.
+2. Open **Ksign**, then **Files** (or **Import**), and pick the newest `Mirage-*-9.1.90.ipa`.
 3. Tap the imported app, then **Sign**:
    - Certificate: your AppTesters certificate.
    - Bundle ID: either keep `com.spotify.client` or change it. If you change it, the lock screen
@@ -36,4 +36,7 @@ To debug with `get-task-allow`, sign the same IPA in SideStore instead. Nothing 
 ## Updating
 
 Install a newer `Mirage-*.ipa` over the old one with the same bundle ID and certificate. Your settings and picked
-backgrounds stay, because they live in the app's own container.
+backgrounds stay, because they live in the app's own container. Then check **Settings → Mirage → About → Version**:
+if it still shows the old number, the old copy is what's running. In Ksign, delete the older imported IPA and sign the
+new file; in LiveContainer, replace the existing Spotify when asked (or remove it first, after exporting nothing you need)
+and make sure no older `Mirage.dylib` sits in LiveContainer's Tweaks folder for this app.

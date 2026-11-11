@@ -37,7 +37,7 @@ WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 # Version and decryption checks, from the IPA itself.
 read -r APP_DIR SPOTIFY_VERSION <<<"$(python3 "$ROOT/scripts/mirage-ipa.py" info "$IN")"
 MRG_VERSION="$(cat "$ROOT/mirage/VERSION")"
-OUT="${OUT:-$ROOT/out/Mirage-$SPOTIFY_VERSION.ipa}"
+OUT="${OUT:-$ROOT/out/Mirage-$MRG_VERSION-$SPOTIFY_VERSION.ipa}"
 echo "==> Mirage $MRG_VERSION + Vitrine $(cat "$ROOT/version.txt") on Spotify $SPOTIFY_VERSION -> $OUT"
 grep -q "\"$SPOTIFY_VERSION\"" "$ROOT/tweak/Sources/App/Onboarding/Onboarding.h" \
   || echo "    warning: Vitrine does not list Spotify $SPOTIFY_VERSION as supported (tweak/Sources/App/Onboarding/Onboarding.h)"
