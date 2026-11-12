@@ -5,6 +5,8 @@
 #import "MRGPrefs.h"
 #import "MRGSafe.h"
 #import "MRGDJLog.h"
+#import "Addons/MRGAddon.h"
+#import "MRGAddons.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 static NSString *const kInclude = @"mirage.saver.includeFiles";
@@ -21,6 +23,8 @@ static BOOL settingsKey(NSString *key) {
     if (secretKey(key)) return NO;
     if ([key isEqualToString:@"mirage.addons.index"] || [key isEqualToString:@"mirage.themes.remoteCache"]) return NO;
     if ([key containsString:@"history"] || [key containsString:@"userVoice"] || [key containsString:@".log"]) return NO;
+    // Per-launch bookkeeping, not settings: a restored "launching" flag would turn that add-on off as if it crashed.
+    if ([key hasSuffix:@".launching"] || [key hasSuffix:@".notice"] || [key hasSuffix:@".recent"]) return NO;
     return YES;
 }
 
@@ -84,11 +88,24 @@ static NSString *validate(NSDictionary *doc, NSDictionary **prefsOut, NSArray **
     return nil;
 }
 
+// Loading a file or a preset also starts or stops the add-ons it turns on or off, the same as the shop's switch,
+// so they work right away instead of after a relaunch. An add-on the file doesn't mention is turned off.
 static void applyPrefs(NSDictionary *prefs) {
     NSUserDefaults *d = NSUserDefaults.standardUserDefaults;
+    NSMutableDictionary *was = [NSMutableDictionary dictionary];
+    for (id<MRGAddon> addon in MRGRegisteredAddons()) was[addon.addonID] = @(MRGAddonInstalled(addon.addonID));
     [prefs enumerateKeysAndObjectsUsingBlock:^(NSString *key, id obj, BOOL *stop) {
         if (settingsKey(key)) [d setObject:obj forKey:key];
     }];
+    for (id<MRGAddon> addon in MRGRegisteredAddons()) {
+        NSString *flag = [@"mirage.addon." stringByAppendingString:addon.addonID];
+        if (!prefs[flag]) [d setBool:NO forKey:flag];
+        BOOL now = MRGAddonInstalled(addon.addonID);
+        if (now == [was[addon.addonID] boolValue]) continue;
+        if (now) MRGAddonRunEnable(addon.addonID);
+        else MRGAddonRunDisable(addon.addonID);
+    }
+    [d synchronize];
     MRGPostChange();
 }
 
