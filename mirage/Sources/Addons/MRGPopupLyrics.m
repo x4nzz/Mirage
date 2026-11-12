@@ -7,7 +7,8 @@
 // looked up at runtime, so Mirage still runs without Vitrine (the shelf then stays closed). The active line is large
 // and bright; the others are smaller, dimmer and softly blurred, and the column springs to each new line. In Low
 // Power Mode the lines step without the spring or the blur, and the clock ticks twice a second instead of ten times.
-// Tapping the shelf opens the player through Spotify's own now playing bar.
+// Tapping the shelf opens the player through Spotify's own now playing bar, then its lyrics: Vitrine's lyrics view
+// (the cover moves beside the title and the lines take the stage), else Spotify's lyrics card, opened by its own tap.
 #import "Addons/MRGPopupLyrics.h"
 #import "Addons/MRGAddon.h"
 #import "Addons/MRGPalette.h"
@@ -15,6 +16,7 @@
 #import "MRGPlayer.h"
 #import "MRGPrefs.h"
 #import "MRGDJLog.h"
+#import "MRGNowKit.h"
 #import <objc/runtime.h>
 #import <objc/message.h>
 #import <dlfcn.h>
@@ -36,6 +38,12 @@ static AskFn sgAsk;
 static TextFn sgText;
 static BOOL sgLooked;
 
+typedef BOOL (*FlagFn)(void);
+typedef void (*VoidFn)(void);
+static FlagFn sgLyricsOpen, sgLyricsAvailable;
+static VoidFn sgToggleLyrics;
+static __weak UIView *sg_lyricsCard;   // Spotify's lyrics preview in the player, as the Now Playing kit last laid it out
+
 static void resolveSymbols(void) {
     if (sgLooked) return;
     sgLooked = YES;
@@ -45,6 +53,9 @@ static void resolveSymbols(void) {
     sgTrack = dlsym(RTLD_DEFAULT, "SGKaraokePlayingTrack");
     sgAsk = dlsym(RTLD_DEFAULT, "SGKaraokeRequestLyrics");
     sgText = dlsym(RTLD_DEFAULT, "SGKaraokeLineText");
+    sgLyricsOpen = dlsym(RTLD_DEFAULT, "SGRPlayerLyricsOpen");
+    sgLyricsAvailable = dlsym(RTLD_DEFAULT, "SGRPlayerLyricsAvailable");
+    sgToggleLyrics = dlsym(RTLD_DEFAULT, "SGRPlayerToggleLyrics");
 }
 
 static CGFloat fontSize(void) { return MIN(30, MAX(18, MRGAddonNumber(kAddon, @"size", 24))); }
@@ -213,6 +224,58 @@ static void shadowText(UILabel *l) {
     l.layer.shadowOffset = CGSizeMake(0, 1);
 }
 
+// 0.6.8 root cause of "the pop-up lyrics opens the Now Playing screen, not the lyrics in it": the tap only ever opened
+// the player (0.6.7 fixed that much). Now, once the player is up, the lyrics are opened in it too: Vitrine's lyrics
+// view when Vitrine has it (the same as its lyrics button), else Spotify's lyrics card under the cover, through the
+// card's own tap (it opens Spotify's full lyrics). The player slides up over ~0.4s, so this waits for it, up to 3s.
+static BOOL onScreen(UIView *v) {
+    if (!v || !v.window || v.hidden || v.alpha < 0.05) return NO;
+    CGRect r = [v convertRect:v.bounds toView:nil];
+    return CGRectIntersectsRect(CGRectInset(v.window.bounds, 0, 40), r) && r.size.height > 20;
+}
+
+static BOOL tapCard(UIView *card) {
+    NSMutableArray<UIView *> *views = [NSMutableArray arrayWithObject:card];
+    for (UIView *up = card.superview; up && views.count < 4 && up.bounds.size.height <= card.bounds.size.height * 1.5; up = up.superview) [views addObject:up];
+    for (UIView *v in views) if ([v isKindOfClass:UIControl.class] && ((UIControl *)v).enabled) { [(UIControl *)v sendActionsForControlEvents:UIControlEventTouchUpInside]; return YES; }
+    for (UIView *v in views) for (UIGestureRecognizer *g in v.gestureRecognizers) if (sendTap(g)) return YES;
+    for (UIView *v in views) if ([v accessibilityActivate]) return YES;
+    return NO;
+}
+
+static void openLyricsSoon(int attempt, BOOL toggled) {
+    resolveSymbols();
+    if (attempt > 20) { MRGDJLog(@"pop-up lyrics: the player opened, but no lyrics view showed up in it"); return; }
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.15 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        @try {
+            if (sgLyricsOpen && sgLyricsOpen()) { MRGDJLog(@"pop-up lyrics: opened the lyrics view"); return; }
+            // Vitrine's view, once the player has settled (its host is only there after the player's first layout).
+            if (attempt >= 3 && !toggled && sgToggleLyrics && sgLyricsAvailable && sgLyricsAvailable()) {
+                sgToggleLyrics();
+                openLyricsSoon(attempt + 1, YES);
+                return;
+            }
+            // No Vitrine lyrics view (or it didn't open within a few tries): Spotify's own lyrics card.
+            BOOL vitrineMissed = !sgToggleLyrics || !sgLyricsAvailable || (toggled && attempt >= 8) || (attempt >= 8 && !sgLyricsAvailable());
+            UIView *card = sg_lyricsCard;
+            if (vitrineMissed && onScreen(card) && tapCard(card)) { MRGDJLog(@"pop-up lyrics: opened Spotify's lyrics card"); return; }
+        } @catch (NSException *e) {
+            MRGDJLog(@"pop-up lyrics: opening the lyrics failed (%@)", e.reason);
+            return;
+        }
+        openLyricsSoon(attempt + 1, toggled);
+    });
+}
+
+static void watchLyricsCard(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        MRGNowAddPartClient(^(MRGNowPart part, id owner) {
+            if (part == MRGNowLyrics && [owner isKindOfClass:UIView.class]) sg_lyricsCard = owner;
+        });
+    });
+}
+
 @implementation MRGLyricsShelf {
     UIVisualEffectView *_glass;
     UIVisualEffectView *_frost;   // a real blur under liquid glass, faded in by Glass clarity
@@ -330,7 +393,9 @@ static void shadowText(UILabel *l) {
 
 - (void)tapped {
     [[UIImpactFeedbackGenerator new] impactOccurred];
-    if (!openPlayer(self)) MRGDJLog(@"pop-up lyrics: no now playing bar to open");
+    watchLyricsCard();
+    if (!openPlayer(self)) { MRGDJLog(@"pop-up lyrics: no now playing bar to open"); return; }
+    if (MRGAddonInteger(kAddon, @"tap", 0) == 0) openLyricsSoon(0, NO);
 }
 
 - (void)layoutSubviews {
@@ -832,7 +897,9 @@ void MRGPopupPlace(UIView *page) {
     colors.footer = @"Cover art tints the card with the playing song's cover. The text turns dark when the tint is bright.";
     MRGAddonSetting *style = [MRGAddonSetting picker:@"style" title:@"Sync" options:@[@"Line by line", @"Word by word"] values:@[@0, @1] fallback:@0];
     style.footer = @"Word by word uses the source's word timings. When it only times lines, the words are spread across the line as an estimate, and the header shows LYRICS ≈.";
-    return @[size, lines, style, colors, clarity, tint];
+    MRGAddonSetting *tap = [MRGAddonSetting picker:@"tap" title:@"Tapping it opens" options:@[@"The lyrics", @"The player"] values:@[@0, @1] fallback:@0];
+    tap.footer = @"The lyrics opens the player straight on its lyrics view.";
+    return @[size, lines, style, colors, clarity, tint, tap];
 }
 // On or off takes effect on Home right away: every Home page seen gets its shelf (or loses its room).
 static void relayoutHome(void) {
