@@ -117,7 +117,7 @@ static void onMain(void (^b)(void)) { if (NSThread.isMainThread) b(); else dispa
         [_engine prepare];
         NSError *e = nil;
         if (![_engine startAndReturnError:&e]) return [@"The mic couldn't start: " stringByAppendingString:e.localizedDescription ?: @"?"];
-        _ducked = MRGDuckMusic(YES);
+        _ducked = MRGDuckHold(@"mic", ^BOOL { return MRGDJListener.shared.isListening; });
         MRGDJLog(@"voice in: listening (%@)", _request.requiresOnDeviceRecognition ? @"on the phone" : @"Apple's speech service");
         return nil;
     } @catch (NSException *x) {
@@ -149,7 +149,7 @@ static void onMain(void (^b)(void)) { if (NSThread.isMainThread) b(); else dispa
 }
 
 - (void)restoreAudio {
-    if (_ducked) { MRGDuckMusic(NO); _ducked = NO; }
+    if (_ducked) { MRGDuckRelease(@"mic"); _ducked = NO; }
     if (_changedSession) {
         _changedSession = NO;
         @try { [AVAudioSession.sharedInstance setCategory:_oldCategory mode:_oldMode options:_oldOptions error:nil]; } @catch (NSException *x) {}

@@ -645,6 +645,8 @@ static NSString *withPauses(NSString *text, NSString *mark) {
     NSUInteger _pending;
     AVSpeechUtterance *_lastUtterance;
     NSArray<AVSpeechUtterance *> *_batch;   // the current line's utterances: callbacks for older ones are ignored
+    CFTimeInterval _audioStarted;
+    BOOL _busyLine;
 }
 
 + (instancetype)shared {
@@ -660,10 +662,21 @@ static NSString *withPauses(NSString *text, NSString *mark) {
     _synth.delegate = self;
     // The speech goes through its own session, never Spotify's, so playback is not touched.
     _synth.usesApplicationAudioSession = NO;
+    // A call or Siri cuts the line off without any end callback: it is over, and the music comes back up.
+    [NSNotificationCenter.defaultCenter addObserverForName:AVAudioSessionInterruptionNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
+        if ([n.userInfo[AVAudioSessionInterruptionTypeKey] unsignedIntegerValue] == AVAudioSessionInterruptionTypeBegan && self->_busyLine) { MRGDJLog(@"voice: line cut off by an interruption"); [self stop]; }
+    }];
     return self;
 }
 
 - (BOOL)isSpeaking { return _synth.isSpeaking || _audio.isPlaying; }
+// Busy while a line is fetched or said. An AVAudioPlayer stopped by an interruption is not playing and says nothing,
+// so a line whose audio stopped without an end is over too.
+- (BOOL)isBusy {
+    if (!_busyLine) return NO;
+    if (_audio && !_audio.isPlaying && _audioStarted && CACurrentMediaTime() - _audioStarted > 0.5) { [self finish]; return NO; }
+    return YES;
+}
 
 // The last line's result ("✓ ElevenLabs · Arabella spoke" or "✗ ElevenLabs: … (HTTP 402, …)"), for the voice page and
 // the DJ sheet.
@@ -673,6 +686,8 @@ static NSString *withPauses(NSString *text, NSString *mark) {
 }
 
 - (void)finish {
+    _busyLine = NO;
+    _audioStarted = 0;
     void (^f)(void) = _finished;
     _finished = nil;
     if (f) f();
@@ -694,6 +709,7 @@ static NSString *withPauses(NSString *text, NSString *mark) {
     [self stop];
     NSUInteger token = ++_token;
     _finished = [finished copy];
+    _busyLine = YES;
     MRGVoiceEngine engine = engineArg >= 0 ? (MRGVoiceEngine)engineArg : MRGVoiceGetEngine();
     double speed = MRGVoiceSpeed();
     void (^play)(NSData *, NSString *, NSString *) = ^(NSData *audio, NSString *error, NSString *what) {
@@ -702,6 +718,7 @@ static NSString *withPauses(NSString *text, NSString *mark) {
             self->_audio = [[AVAudioPlayer alloc] initWithData:audio error:nil];
             self->_audio.delegate = self;
             BOOL playing = self->_audio && [self->_audio play];
+            if (playing) self->_audioStarted = CACurrentMediaTime();
             if (playing && [what hasPrefix:@"Free"]) { static BOOL said; if (!said) { said = YES; MRGDJLog(@"voice: %@ spoke (%lu KB from Microsoft's free voice)", what, (unsigned long)(audio.length / 1024)); } }
             if (playing) { [self report:[NSString stringWithFormat:@"✓ %@ spoke", engine == MRGVoiceEngineEleven ? engineSummary() : what] failed:NO]; if (started) started(); return; }
         }
@@ -722,7 +739,7 @@ static NSString *withPauses(NSString *text, NSString *mark) {
                 if (a2) {
                     self->_audio = [[AVAudioPlayer alloc] initWithData:a2 error:nil];
                     self->_audio.delegate = self;
-                    if (self->_audio && [self->_audio play]) { [self report:[NSString stringWithFormat:@"✗ %@ failed (%@); the free voice spoke instead", what, why] failed:YES]; if (started) started(); return; }
+                    if (self->_audio && [self->_audio play]) { self->_audioStarted = CACurrentMediaTime(); [self report:[NSString stringWithFormat:@"✗ %@ failed (%@); the free voice spoke instead", what, why] failed:YES]; if (started) started(); return; }
                 }
                 [self report:[NSString stringWithFormat:@"✗ %@ failed (%@) and so did the free voice (%@); the iPhone voice spoke", what, why, e2 ?: @"?"] failed:YES];
                 [self speakOnPhone:text voice:nil started:started];

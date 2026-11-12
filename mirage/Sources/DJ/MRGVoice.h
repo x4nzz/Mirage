@@ -69,6 +69,8 @@ void MRGVoicePreparePreset(NSString *presetID, void (^done)(NSString *message));
 @interface MRGVoiceSpeaker : NSObject
 + (instancetype)shared;
 @property (nonatomic, readonly, getter=isSpeaking) BOOL speaking;
+// 0.6.8: from speak: until its line is over (fetching the audio included), for the duck's watchdog.
+@property (nonatomic, readonly, getter=isBusy) BOOL busy;
 @property (nonatomic, readonly, copy) NSString *lastResult;   // "✓ … spoke" or "✗ <exact error>"
 // Says `text` with the current settings; `engine`/`voice` override them for previews (pass -1 / nil to use settings).
 - (void)speak:(NSString *)text engine:(NSInteger)engine voice:(NSString *)voice started:(void (^)(void))started finished:(void (^)(void))finished;

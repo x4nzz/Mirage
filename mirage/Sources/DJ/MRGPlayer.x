@@ -2,6 +2,7 @@
 #import "MRGSpotifyWeb.h"
 #import <UIKit/UIKit.h>
 #import <AudioToolbox/AudioToolbox.h>
+#import <AVFoundation/AVFoundation.h>
 #import <objc/runtime.h>
 #import <objc/message.h>
 #import <stdatomic.h>
@@ -1046,8 +1047,98 @@ static OSStatus disposeUnit(AudioComponentInstance instance) {
     return sg_realDispose ? sg_realDispose(instance) : AudioComponentInstanceDispose(instance);
 }
 
+// 0.6.8 root cause of "the music stays dim": the duck was one switch flipped by whoever spoke last. A line whose
+// player never reported its end (an interruption, a call, a route change, a failed voice, a cancelled line) left it
+// down, and two users (the DJ talking, the mic listening) turned it up or down under each other. Now each user holds
+// the duck by name and lets go of its own hold; the music is lowered while any hold is on. A watchdog checks every
+// hold once a second: one whose owner says it is no longer needed (twice in a row), or older than 90 seconds, is let
+// go, and an audio interruption, a media reset or the app leaving the foreground with nothing speaking lets go of all.
+static NSMutableDictionary<NSString *, NSArray *> *sg_holds;   // owner → @[start time, still-needed block or NSNull]
+static NSMutableDictionary<NSString *, NSNumber *> *sg_holdMisses;
+static NSTimer *sg_duckWatch;
+
+static void applyDuck(void) {
+    BOOL down = sg_holds.count > 0;
+    atomic_store(&sg_duckTarget, down ? 0.3f : 1.0f);
+    if (!down) { [sg_duckWatch invalidate]; sg_duckWatch = nil; }
+}
+
+static void onMainSync(void (^b)(void)) { if (NSThread.isMainThread) b(); else dispatch_async(dispatch_get_main_queue(), b); }
+
+void MRGDuckRelease(NSString *owner) {
+    onMainSync(^{
+        if (!owner || !sg_holds[owner]) return;
+        [sg_holds removeObjectForKey:owner];
+        [sg_holdMisses removeObjectForKey:owner];
+        applyDuck();
+    });
+}
+
+void MRGDuckReleaseAll(NSString *why) {
+    onMainSync(^{
+        if (!sg_holds.count) { atomic_store(&sg_duckTarget, 1.0f); return; }
+        MRGDJLog(@"duck: music back up (%@; held by %@)", why ?: @"?", [sg_holds.allKeys componentsJoinedByString:@", "]);
+        [sg_holds removeAllObjects];
+        [sg_holdMisses removeAllObjects];
+        applyDuck();
+    });
+}
+
+static void duckWatch(void) {
+    CFTimeInterval now = CACurrentMediaTime();
+    for (NSString *owner in sg_holds.allKeys) {
+        NSArray *h = sg_holds[owner];
+        double age = now - [h[0] doubleValue];
+        BOOL (^needed)(void) = [h[1] isKindOfClass:NSNull.class] ? nil : h[1];
+        BOOL keep = age < 90;
+        if (keep && needed) {
+            BOOL n = YES;
+            @try { n = needed(); } @catch (NSException *e) { n = NO; }
+            NSInteger misses = n ? 0 : [sg_holdMisses[owner] integerValue] + 1;
+            sg_holdMisses[owner] = @(misses);
+            if (misses >= 2) keep = NO;
+        }
+        if (!keep) {
+            MRGDJLog(@"duck: watchdog let go of %@'s hold after %.0fs (%@)", owner, age, age >= 90 ? @"too long" : @"no longer needed");
+            [sg_holds removeObjectForKey:owner];
+            [sg_holdMisses removeObjectForKey:owner];
+        }
+    }
+    applyDuck();
+}
+
+BOOL MRGDuckHold(NSString *owner, BOOL (^stillNeeded)(void)) {
+    if (!owner) return sg_duckReady;
+    BOOL (^needed)(void) = [stillNeeded copy];
+    onMainSync(^{
+        if (!sg_holds) {
+            sg_holds = [NSMutableDictionary dictionary];
+            sg_holdMisses = [NSMutableDictionary dictionary];
+            NSNotificationCenter *nc = NSNotificationCenter.defaultCenter;
+            [nc addObserverForName:AVAudioSessionInterruptionNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
+                if ([n.userInfo[AVAudioSessionInterruptionTypeKey] unsignedIntegerValue] == AVAudioSessionInterruptionTypeBegan) MRGDuckReleaseAll(@"audio interrupted");
+            }];
+            [nc addObserverForName:AVAudioSessionMediaServicesWereResetNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) { MRGDuckReleaseAll(@"media services reset"); }];
+            [nc addObserverForName:UIApplicationDidEnterBackgroundNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
+                // In the background only a hold that is still needed (a line being said) stays.
+                duckWatch();
+            }];
+        }
+        sg_holds[owner] = @[@(CACurrentMediaTime()), needed ? (id)needed : (id)NSNull.null];
+        [sg_holdMisses removeObjectForKey:owner];
+        applyDuck();
+        if (!sg_duckWatch) {
+            sg_duckWatch = [NSTimer timerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *t) { duckWatch(); }];
+            sg_duckWatch.tolerance = 0.3;
+            [NSRunLoop.mainRunLoop addTimer:sg_duckWatch forMode:NSRunLoopCommonModes];
+        }
+    });
+    return sg_duckReady;
+}
+
 BOOL MRGDuckMusic(BOOL duck) {
-    atomic_store(&sg_duckTarget, duck ? 0.3f : 1.0f);
+    if (duck) return MRGDuckHold(@"dj", nil);
+    MRGDuckRelease(@"dj");
     return sg_duckReady;
 }
 

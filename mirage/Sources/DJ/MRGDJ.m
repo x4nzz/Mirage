@@ -1853,7 +1853,8 @@ static NSInteger queuePosition(MRGDJTrack *t, NSArray<NSDictionary *> *queued) {
         });
         return;
     }
-    if (MRGDJDucks()) MRGDuckMusic(YES);
+    // Held for as long as the speaker has the line (fetching it included); the duck's watchdog lets go otherwise.
+    if (MRGDJDucks()) MRGDuckHold(@"dj", ^BOOL { return MRGVoiceSpeaker.shared.isBusy; });
     NSUInteger tok = ++_speakToken;
     [MRGVoiceSpeaker.shared speak:line engine:-1 voice:nil started:nil finished:^{ if (tok == self->_speakToken) [self finishedSpeaking]; }];
 }
@@ -1861,7 +1862,7 @@ static NSInteger queuePosition(MRGDJTrack *t, NSArray<NSDictionary *> *queued) {
 - (void)finishedSpeaking {
     // Back up after a short tail, so the last word is not stepped on.
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        if (!MRGVoiceSpeaker.shared.isSpeaking) { MRGDuckMusic(NO); [self setSpeaking:NO line:nil]; }
+        if (!MRGVoiceSpeaker.shared.isBusy) { MRGDuckMusic(NO); [self setSpeaking:NO line:nil]; }
     });
 }
 

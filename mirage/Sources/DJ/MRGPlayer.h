@@ -46,7 +46,12 @@ void MRGWaitForPlayback(NSArray<NSString *> *tracks, NSString *contextURI, NSTim
 // Lowers Spotify's own output to 30% while the DJ speaks (a render notify on Spotify's output units, eased so
 // it never clicks) and brings it back. NO when Spotify's AudioOutputUnitStart could not be rebound: the DJ
 // then talks over the music at full level.
-BOOL MRGDuckMusic(BOOL duck);
+BOOL MRGDuckMusic(BOOL duck);   // the DJ's own hold ("dj")
+// 0.6.8: holds by owner. The music stays lowered while any hold is on; `stillNeeded` (main queue, may be nil) is asked
+// once a second and a hold it answers NO to twice is let go; every hold ends after 90 s at most.
+BOOL MRGDuckHold(NSString *owner, BOOL (^stillNeeded)(void));
+void MRGDuckRelease(NSString *owner);
+void MRGDuckReleaseAll(NSString *why);
 
 // Player controls on the music player: "resume", "pause", "next", "previous" (done may be nil).
 void MRGPlayerControl(NSString *what, void (^done)(BOOL ok, NSString *error));
