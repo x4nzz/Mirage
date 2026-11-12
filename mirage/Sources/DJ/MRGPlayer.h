@@ -32,6 +32,12 @@ void MRGClearQueue(void (^done)(NSUInteger removed, NSString *error));   // Spot
 void MRGQueueTracks(NSArray<NSString *> *uris, void (^done)(BOOL ok, NSString *error));
 // Spotify's actual queue read back: `queued` (provider "queue", in order) and everything up next; main queue.
 void MRGFetchQueue(void (^done)(NSArray<NSDictionary *> *queued, NSArray<NSDictionary *> *upNext, NSString *error));
+// Queue edits through the player's own queue (fetchQueue:on: / setQueue:), the queued tracks only; main queue.
+void MRGQueueReorder(NSArray<NSString *> *order, void (^done)(BOOL ok, NSString *error));   // queued tracks in this order
+void MRGQueueRemove(NSArray<NSString *> *uris, void (^done)(BOOL ok, NSString *error));
+void MRGQueuePlayNext(NSArray<NSString *> *uris, void (^done)(BOOL ok, NSString *error));  // queued, then moved to the front
+// The current track's position and length in seconds (Spotify's player state); NO when unknown.
+BOOL MRGPlayerProgress(double *position, double *duration);
 // Hands a spotify: URI to Spotify's own link dispatcher, as a tapped link would (opens its page). NO when not captured.
 BOOL MRGOpenSpotifyURI(NSString *uri);
 // Waits until the player is on one of the tracks or in the context, not paused; `seen` says what it saw instead.

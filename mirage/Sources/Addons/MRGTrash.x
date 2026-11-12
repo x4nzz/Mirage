@@ -131,9 +131,9 @@ static void placeButton(UIView *root) {
 %end
 %end
 
-static void addMenuRow(UIViewController *menu) {
-    if (!MRGAddonInstalled(kAddon)) return;
-    if (objc_getAssociatedObject(menu, &kButtonKey)) return;
+// The track Spotify's context menu is about (its own objects, or the playing song when the menu names it), or nil.
+NSString *MRGContextMenuTrackURI(UIViewController *menu) {
+    if (!menu.viewIfLoaded) return nil;
     NSString *uri = uriInObject(menu, 0);
     NSDictionary *now = MRGNowPlaying();
     if (!uri && [now[@"title"] isKindOfClass:NSString.class]) {
@@ -146,7 +146,26 @@ static void addMenuRow(UIViewController *menu) {
             [stack addObjectsFromArray:view.subviews];
         }
     }
-    if (![uri hasPrefix:@"spotify:track:"]) return;
+    return [uri hasPrefix:@"spotify:track:"] ? uri : nil;
+}
+
+UITableView *MRGContextMenuTable(UIViewController *menu) {
+    UITableView *table = nil;
+    NSMutableArray *stack = menu.viewIfLoaded ? [NSMutableArray arrayWithObject:menu.view] : [NSMutableArray array];
+    while (stack.count && !table) {
+        UIView *view = stack.lastObject; [stack removeLastObject];
+        if ([view isKindOfClass:UITableView.class]) table = (UITableView *)view;
+        else [stack addObjectsFromArray:view.subviews];
+    }
+    return table;
+}
+
+static void addMenuRow(UIViewController *menu) {
+    if (!MRGAddonInstalled(kAddon)) return;
+    if (objc_getAssociatedObject(menu, &kButtonKey)) return;
+    NSString *uri = MRGContextMenuTrackURI(menu);
+    NSDictionary *now = MRGNowPlaying();
+    if (!uri) return;
     UITableView *table = nil;
     NSMutableArray *stack = [NSMutableArray arrayWithObject:menu.view];
     while (stack.count && !table) {

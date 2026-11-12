@@ -138,6 +138,8 @@ static NSDictionary *infoOf(id track) {
         NSString *image = MRGImageURL(meta[k]);
         if (image) { d[@"image"] = image; break; }
     }
+    if ([meta[@"album_uri"] isKindOfClass:NSString.class]) d[@"album"] = meta[@"album_uri"];
+    if ([meta[@"album_title"] isKindOfClass:NSString.class]) d[@"albumTitle"] = meta[@"album_title"];
     NSString *provider = sget(t, @"provider");
     if (![provider isKindOfClass:NSString.class]) provider = nil;
     BOOL ad = [uri hasPrefix:@"spotify:ad:"] || [provider isEqualToString:@"ad"] || [meta[@"is_advertisement"] isEqual:@"true"];
@@ -209,6 +211,22 @@ static double stateDuration(id st) {
     if (![st respondsToSelector:@selector(duration)]) { missing(st, @"duration"); return 0; }
     double v = ((double (*)(id, SEL))objc_msgSend)(st, @selector(duration));
     return v > 3600 ? v / 1000.0 : v;
+}
+
+BOOL MRGPlayerProgress(double *position, double *duration) {
+    @try {
+        SPTPlayerState *st = currentState();
+        if (!st || !stateTrack(st)) return NO;
+        double dur = stateDuration(st);
+        SEL posSel = sflag(st, @"isPaused") ? NSSelectorFromString(@"positionAsOfTimestamp") : NSSelectorFromString(@"position");
+        if (![st respondsToSelector:posSel]) { missing(st, NSStringFromSelector(posSel)); return NO; }
+        double pos = ((double (*)(id, SEL))objc_msgSend)(st, posSel);
+        if (pos > 36000) pos /= 1000.0;
+        if (!isfinite(pos) || !isfinite(dur) || dur <= 0) return NO;
+        if (position) *position = MAX(0, MIN(pos, dur));
+        if (duration) *duration = dur;
+        return YES;
+    } @catch (__unused NSException *e) { return NO; }
 }
 
 static int sg_lastShuffle = -1;
@@ -765,6 +783,92 @@ void MRGClearQueue(void (^done)(NSUInteger removed, NSString *error)) {
                 ((void (*)(id, SEL, id, id))objc_msgSend)(player, fetch, got, dispatch_get_main_queue());
             } @catch (NSException *e) { finish(0, [NSString stringWithFormat:@"%@: %@", e.name, e.reason]); }
         });
+    });
+}
+
+static NSString *trackURIOf(id t) { return uriString(sget(t, @"URI")); }
+
+// Edits the queued tracks (provider "queue") in place: the player's fetchQueue:on: gives its SPTPlayerQueue, `edit`
+// returns the queued tracks in their new order (it can drop some), and the copy goes back with setQueue:. The
+// context's own up-next stays after them, untouched. Serialized with the other queue commands.
+static void editQueue(NSString *name, NSArray *(^edit)(NSArray *queued), void (^done)(BOOL ok, NSString *error)) {
+    queueOp(name, ^(void (^next)(void)) {
+        __block BOOL answered = NO;
+        void (^finish)(BOOL, NSString *) = ^(BOOL ok, NSString *e) {
+            if (answered) return;
+            answered = YES;
+            MRGDJLog(@"queue: %@ %@", name, ok ? @"done" : [@"failed: " stringByAppendingString:e ?: @"?"]);
+            next();
+            if (done) done(ok, e);
+        };
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ finish(NO, @"Spotify didn't answer in time"); });
+        whenQueueReady(3, ^(NSString *notReady) {
+            if (notReady) { finish(NO, notReady); return; }
+            @try {
+                id player = playingPlayer();
+                SEL fetch = NSSelectorFromString(@"fetchQueue:on:");
+                if (![player respondsToSelector:fetch] || ![player respondsToSelector:@selector(setQueue:)]) { finish(NO, @"the player has no fetchQueue:on: / setQueue:"); return; }
+                void (^got)(id) = ^(id q) {
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        @try {
+                            if (!q || ![q respondsToSelector:@selector(nextTracks)] || ![q respondsToSelector:@selector(copyWithZone:)]) { finish(NO, @"the queue came back empty"); return; }
+                            NSArray *nextTracks = [q nextTracks];
+                            if (![nextTracks isKindOfClass:NSArray.class]) { finish(NO, @"the queue had no track list"); return; }
+                            NSMutableArray *queued = [NSMutableArray array], *rest = [NSMutableArray array];
+                            for (id t in nextTracks) [[providerOf(t) isEqualToString:@"queue"] ? queued : rest addObject:t];
+                            NSArray *edited = edit(queued);
+                            if (![edited isKindOfClass:NSArray.class]) { finish(NO, @"nothing to change"); return; }
+                            id copy = [q copy];
+                            if (![copy respondsToSelector:@selector(setNextTracks:)]) { finish(NO, @"the queue can't be edited"); return; }
+                            [copy setNextTracks:[edited arrayByAddingObjectsFromArray:rest]];
+                            id task = [player setQueue:copy];
+                            if (!task) { finish(YES, nil); return; }
+                            watchTask(task, ^(BOOL ok, NSString *e) { finish(ok, ok ? nil : (e ?: @"setQueue: refused")); });
+                        } @catch (NSException *e) { finish(NO, [NSString stringWithFormat:@"%@: %@", e.name, e.reason]); }
+                    });
+                };
+                ((void (*)(id, SEL, id, id))objc_msgSend)(player, fetch, got, dispatch_get_main_queue());
+            } @catch (NSException *e) { finish(NO, [NSString stringWithFormat:@"%@: %@", e.name, e.reason]); }
+        });
+    });
+}
+
+void MRGQueueReorder(NSArray<NSString *> *order, void (^done)(BOOL ok, NSString *error)) {
+    NSArray *wanted = [order isKindOfClass:NSArray.class] ? [order copy] : @[];
+    editQueue([NSString stringWithFormat:@"reorder %lu", (unsigned long)wanted.count], ^NSArray *(NSArray *queued) {
+        NSMutableArray *pool = [queued mutableCopy], *out = [NSMutableArray array];
+        for (NSString *uri in wanted) {
+            for (NSUInteger i = 0; i < pool.count; i++) if ([trackURIOf(pool[i]) isEqualToString:uri]) { [out addObject:pool[i]]; [pool removeObjectAtIndex:i]; break; }
+        }
+        [out addObjectsFromArray:pool];   // anything queued meanwhile stays, after
+        return out;
+    }, done);
+}
+
+void MRGQueueRemove(NSArray<NSString *> *uris, void (^done)(BOOL ok, NSString *error)) {
+    NSSet *drop = [NSSet setWithArray:[uris isKindOfClass:NSArray.class] ? uris : @[]];
+    editQueue([NSString stringWithFormat:@"remove %lu", (unsigned long)drop.count], ^NSArray *(NSArray *queued) {
+        NSMutableArray *out = [NSMutableArray array];
+        NSMutableSet *left = [drop mutableCopy];   // the first copy of each URI goes
+        for (id t in queued) { NSString *u = trackURIOf(t) ?: @""; if ([left containsObject:u]) { [left removeObject:u]; continue; } [out addObject:t]; }
+        return out;
+    }, done);
+}
+
+// Adds the tracks to the queue, then moves them to its front: they play right after the current song.
+void MRGQueuePlayNext(NSArray<NSString *> *uris, void (^done)(BOOL ok, NSString *error)) {
+    NSArray *front = [uris isKindOfClass:NSArray.class] ? [uris copy] : @[];
+    MRGQueueTracks(front, ^(BOOL ok, NSString *error) {
+        if (!ok) { if (done) done(NO, error); return; }
+        editQueue(@"play next", ^NSArray *(NSArray *queued) {
+            NSMutableArray *pool = [queued mutableCopy], *out = [NSMutableArray array];
+            for (NSString *uri in front) {
+                // the copy just added is the last one with that URI
+                for (NSInteger i = (NSInteger)pool.count - 1; i >= 0; i--) if ([trackURIOf(pool[i]) isEqualToString:uri]) { [out addObject:pool[i]]; [pool removeObjectAtIndex:i]; break; }
+            }
+            [out addObjectsFromArray:pool];
+            return out;
+        }, done);
     });
 }
 
