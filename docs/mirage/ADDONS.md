@@ -109,6 +109,49 @@ Every theme in that file is checked (only the known keys, colors as `#RRGGBB`, n
 doesn't pass is dropped. **Download theme list** turns the fetch off. Off, or a fetch that fails, shows the
 bundled catalog and says so.
 
+## 0.6.4: stability, safe mode, Shuffle+ on the shuffle button
+
+Stability (what was freezing or crashing Spotify, and what changed):
+
+- **Themes** swizzled every `UIColor` creation and parsed the theme JSON from defaults on each one. The
+  theme is now cached under a lock and the swizzle reads two atomics.
+- **Settings changes** were posted synchronously after a `-synchronize` on every write, re-laid out every
+  background view, and Genres posted one on every song. Posts are now coalesced (50 ms), background
+  relayout is coalesced (250 ms) and Genres no longer posts.
+- **Autosave** reacted to `NSUserDefaultsDidChangeNotification` (Spotify writes defaults on every track),
+  read all defaults and wrote a plist on the main thread. It now saves on its own queue, debounced, from
+  Mirage's own changes and on background.
+- **Dynamic colors** decode and sample the cover on a utility queue; **Genres** no longer walks the whole
+  window on every Now Playing layout; **Trash** and **Pop-up lyrics** find their host views once.
+- **Pop-up lyrics** used KVO on Home's `contentInset` to re-apply its room whenever Spotify set the inset,
+  which Spotify does on every layout; the two could keep re-laying Home out. The room is now added and
+  removed inside the feed's own `contentInset` accessors, so Spotify always reads back what it set.
+- **Shuffle+** ordered the whole playlist on the main thread with an O(n²) artist search; ordering now
+  runs off the main thread, linear, over the 200 songs that can be queued.
+- **Launch**: add-ons start 0.6 s after Spotify finishes launching, the duplicate-Mirage scan runs on a
+  utility queue, and the only disk work before `main()` is two tiny files.
+
+Diagnostics:
+
+- `Documents/Mirage/breadcrumbs.log` keeps the last Mirage events (launch, add-ons starting, tracks,
+  Shuffle+, trash skips, caught exceptions, memory warnings, a main thread stuck for 2 s or more).
+  Settings → Mirage → About → **Share diagnostics** shares it with the version, image UUID, device,
+  add-ons on and the DJ log. No keys.
+- **Safe mode**: when two launches in a row die in their first 10 seconds, the next one starts with every
+  add-on off, says so in an alert and in About, and offers to turn them back on. An add-on is blamed on
+  its own only when it crashes inside its own start-up.
+
+Add-ons:
+
+- The Mirage page lists only add-ons that are on; settings of an add-on that is off can't be opened
+  anywhere.
+- New art: one designed set made by `scripts/mirage-art.py` (flat geometry on a shared grid, Mirage
+  purple with one secondary tone per add-on), compiled in as image data.
+- **Pop-up lyrics**: the Home card is liquid glass (Vitrine's glass when loaded, `UIGlassEffect` on
+  iOS 26, an ultra-thin material before), with no shadow or fill over the background.
+- **Shuffle+** is a fourth state of Spotify's shuffle button: Off → Shuffle → Smart Shuffle (when
+  offered) → Shuffle+ (a small `+` on the button) → Off. Long-press the button for a menu.
+
 ## 0.6.3: which Mirage is running
 
 - Settings → Mirage → About shows the version with its build date, the file this Mirage runs from and the
