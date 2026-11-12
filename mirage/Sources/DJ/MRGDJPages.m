@@ -178,19 +178,17 @@ static NSArray<NSDictionary *> *listVoices(MRGVoiceEngine e) { return e == MRGVo
         if (_testLine.length) [f appendFormat:@"\n%@", _testLine];
         NSString *last = MRGVoiceSpeaker.shared.lastResult;
         if (last.length) [f appendFormat:@"\nLast test: %@", last];
-        [f appendString:@"\n\nA preset sets speed, pitch, warmth, breathiness, pauses, a voice style and a fitting voice for every engine, and speaks with the free voices (the iPhone voice stays if you picked it below). It only changes the voice, never the music or the DJ's persona."];
         return f;
     }
-    if (s == 0) return @"A preset sets speed, pitch, warmth, breathiness, pauses, a voice style and a fitting voice for every engine. It only changes the voice, never the music or the DJ's persona. Change anything after and it becomes your own.";
-    if (s == 1) return @"Free: Microsoft Edge's read-aloud voices, no key and no account. It's unofficial, so Microsoft can change or block it; it follows speed, pitch, loudness and pauses, not the style words (Microsoft's free voices have no whisper or emotion styles). If it fails, the iPhone voice speaks and the line above says why.\nElevenLabs never swaps to another voice when they fail: you see their error instead. AI provider voice: OpenAI, Gemini, xAI and Groq keys (Groq's needs its terms accepted in the Groq console).";
-    if (s == 2) return @"Warmth, breathiness, pitch and Voice style are speaking instructions: OpenAI (gpt-4o-mini-tts) and Gemini voices follow them. iPhone voices use speed, pitch and pauses. ElevenLabs uses speed, pauses (as breaks), stability and similarity. xAI uses speed; Groq and xAI get pauses as ellipses.";
+    if (s == 1) return @"ElevenLabs shows its error instead of swapping voices.";
+    if (s == 2) return nil;
     if (s == 3 && MRGVoiceGetEngine() == MRGVoiceEnginePhone)
-        return @"Want a better voice? iOS Settings → Accessibility → Spoken Content → Voices → English, and download an Enhanced or Premium voice (Ava, Zoe, Evan, Nathan…). It shows up here after. A Personal Voice you made in Accessibility can be used once you allow it.";
+        return @"More voices: Settings → Accessibility → Spoken Content → Voices.";
     if (s == 4 && MRGElevenHasKey() && MRGElevenNeedsAdd()) {
         NSDictionary *n = MRGElevenNeedsAdd();
-        return n[@"error"] ?: [NSString stringWithFormat:@"%@ isn't in your ElevenLabs voices yet. Mirage uses it by ID (works on paid ElevenLabs plans); if it fails, add it in ElevenLabs → Voice Library or tap Add to my ElevenLabs.", n[@"name"]];
+        return n[@"error"] ?: [NSString stringWithFormat:@"%@ isn't in your ElevenLabs voices yet.", n[@"name"]];
     }
-    if (s == 4) return @"Optional keys. ElevenLabs: elevenlabs.io → Developers → API keys (library voices like Arabella need a paid plan through the API). Keys stay in this phone's keychain; only the lines the DJ says are sent.";
+    if (s == 4) return @"Keys stay in this phone's keychain.";
     return nil;
 }
 
@@ -520,9 +518,9 @@ UIViewController *MRGVoicePage(void) { return [MRGVoicePageController new]; }
 }
 
 - (NSString *)mrg_footerIn:(UITableView *)t section:(NSInteger)s {
-    if (s == 0) return @"Changes how the DJ talks and how long its lines are, from the next set on. Underground curator also leans the picks off the beaten path.";
-    if (s == 1) return @"Auto follows the persona. Every few: the first track of a set and then every third. Only on switches: just when a new set starts.";
-    return @"Added to the DJ's instructions for picks and the chat, e.g. \"no rap\", \"call me Alex\", \"mostly 2000s\". Sent to your AI provider with each request.";
+    if (s == 0) return nil;
+    if (s == 1) return nil;
+    return @"e.g. \"no rap\", \"mostly 2000s\". Sent to your AI provider.";
 }
 - (CGFloat)tableView:(UITableView *)t heightForRowAtIndexPath:(NSIndexPath *)ip { return ip.section == 2 ? 120 : UITableViewAutomaticDimension; }
 
@@ -603,8 +601,8 @@ static NSString *day(NSDate *d) {
 }
 
 - (NSString *)mrg_footerIn:(UITableView *)t section:(NSInteger)s {
-    if (s == 0) return @"Mirage records every track it sees play from the moment it was installed (it counts a play at 30 seconds, like Spotify). Spotify's app doesn't keep a full history Mirage can read, so for anything older import your data. Everything stays on this iPhone; the chat sends only the answer to a question (like an artist's first play) to your AI provider.";
-    if (s == 1) return @"Request \"Extended streaming history\" at spotify.com/account/privacy (it takes a few days), then pick the ZIP or the Streaming_History_Audio_*.json files here. The shorter \"Account data\" files (StreamingHistory_music_*.json, last year only) work too.";
+    if (s == 0) return @"Stays on this iPhone.";
+    if (s == 1) return @"Extended streaming history from spotify.com/account/privacy.";
     return nil;
 }
 

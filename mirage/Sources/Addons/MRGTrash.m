@@ -128,7 +128,7 @@ static void skipIfTrashed(NSDictionary *track) {
 - (void)reload { [self.tableView reloadData]; }
 - (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)s { return MAX((NSInteger)MRGTrashAll().count, 1); }
 - (NSString *)tableView:(UITableView *)t titleForFooterInSection:(NSInteger)s {
-    return @"Trashed songs are skipped wherever they come up, including the AI DJ. Spotify Free still has its skip limit, about 6 an hour, so Mirage stops auto-skipping when that runs out. Swipe a song to put it back. Nothing here is sent anywhere.";
+    return @"Swipe a song to put it back.";
 }
 - (UITableViewCell *)tableView:(UITableView *)t cellForRowAtIndexPath:(NSIndexPath *)ip {
     return MRGSafeCell(ip, ^UITableViewCell *{

@@ -218,13 +218,13 @@ static NSInteger channel(NSString *key) {
 - (NSString *)addonDescription { return @"Takes a color from the album cover and tints Mirage's accent, toggles and Vitrine's glass. A theme can say that its own accent stays."; }
 - (NSArray<MRGAddonSetting *> *)addonSettings {
     MRGAddonSetting *strengthRow = [MRGAddonSetting slider:@"strength" title:@"Strength" min:0 max:1 fallback:0.75];
-    strengthRow.footer = @"How far the cover's color pulls the accent. Zero keeps the accent you already have.";
+    strengthRow.footer = nil;
     MRGAddonSetting *accent = [MRGAddonSetting toggle:@"accent" title:@"Accent" fallback:YES];
     MRGAddonSetting *toggles = [MRGAddonSetting toggle:@"toggles" title:@"Toggles" fallback:YES];
     MRGAddonSetting *glass = [MRGAddonSetting toggle:@"glass" title:@"Vitrine's glass" fallback:YES];
-    glass.footer = @"A theme that doesn't allow dynamic colors keeps its own accent and glass.";
+    glass.footer = nil;
     MRGAddonSetting *fallback = [MRGAddonSetting color:@"fallback" title:@"Fallback" fallbackRGB:0x1ED760];
-    fallback.footer = @"Used when the cover has no color worth taking. The last color stays up until this one is ready, so the screen doesn't flash.";
+    fallback.footer = @"Used when the cover has no usable color.";
     return @[strengthRow, accent, toggles, glass, fallback];
 }
 - (void)addonDidEnable {

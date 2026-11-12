@@ -246,33 +246,33 @@ static const CGFloat kBottomChrome = 150;
 - (NSString *)mrg_footerIn:(UITableView *)t section:(NSInteger)s {
     if (self.djOnly) {
         switch (s) {
-            case 0: return @"Bring your own key: OpenAI, Gemini (Google AI Studio keys, AQ.… or AIza…), Anthropic, OpenRouter, Groq, xAI, Perplexity, Cerebras, Fireworks, Together, DeepSeek or Mistral. Keys stay in this phone's keychain.\nFree tiers run out: on Groq pick llama-3.1-8b-instant or llama-3.3-70b-versatile (more tokens a day than gpt-oss-120b), on Gemini gemini-2.5-flash-lite; Cerebras and OpenRouter's :free models are free too. A backup key (another provider or account) takes over for 30 minutes when the main one answers 429.";
-            case 1: return @"Talk like me: the DJ mirrors how you write to it in the chat (your last messages, kept on this phone, go to your provider with each request). Turn it off to keep only the persona.";
-            case 2: return @"The DJ picks and talks from what you actually play: on repeat lately, your top artists and throwbacks, from Mirage's own recording and any Spotify data you import.";
-            case 4: return @"Privacy: only track and artist names (what's playing, your history summary, the queue), what you type, and answers a chat question needs are sent to your provider. On Spotify Free, Spotify may shuffle the set and its skip limit still applies.";
+            case 0: return @"Keys stay in this phone's keychain.";
+            case 1: return nil;
+            case 2: return nil;
+            case 4: return @"Only track names and what you type are sent to your provider.";
         }
         return nil;
     }
     if (self.bgOnly) {
         switch (s) {
-            case MRGBgMedia: return @"Images (PNG, JPG, HEIC), GIFs (converted to a looping MP4 when you pick them) and videos (MP4, MOV). Each one you pick is kept. Videos play muted, never touch Spotify's audio, and pause when Spotify is in the background or Low Power Mode is on.";
-            case MRGBgLibrary: return @"Tap one to use it. Swipe to rename or delete. The one marked On is used wherever a page doesn't have its own.";
-            case MRGBgLook: return @"Top fade is the dark shade Spotify lays behind the status bar and the header: Soft keeps a third of it, Off removes it. Clear page backgrounds makes Spotify's own page fill transparent so the background shows through; cards and Vitrine's glass stay as they are. Profile picture glow replaces the profile page's color gradient with a soft glow of that color around your picture.";
-            case MRGBgScreens: return @"Everywhere puts one background behind every page, Home and Library included. The side drawer has its own switch, a little dimmer so its text stays readable.";
-            case MRGBgAssign: return @"Give Home, Now Playing, Library or Everywhere its own saved background. Active uses whichever one is marked On.";
+            case MRGBgMedia: return nil;
+            case MRGBgLibrary: return @"Swipe to rename or delete.";
+            case MRGBgLook: return nil;
+            case MRGBgScreens: return nil;
+            case MRGBgAssign: return nil;
         }
         return nil;
     }
     switch (s) {
-        case MRGSecAddons: return @"The add-ons you have on. Switch one off here or open its settings with the arrow; get more in the Add-on Shop.";
-        case MRGSecBackgrounds: return @"Pictures, video and where they show live on the Backgrounds page. What you already set is kept.";
-        case MRGSecSaver: return @"Every change saves itself right away. Here you can export or import all Mirage settings, or keep named presets on this iPhone. API keys are never included.";
+        case MRGSecAddons: return nil;
+        case MRGSecBackgrounds: return nil;
+        case MRGSecSaver: return @"API keys are never included.";
         case MRGSecDJ:
-            return @"Voice, personality, provider, chat and the DJ's other settings are on the AI DJ page. Bring your own key: OpenAI, Gemini (Google AI Studio keys, AQ.… or AIza…), Anthropic, OpenRouter, Groq, xAI, Perplexity, Cerebras, Fireworks, Together, DeepSeek or Mistral. The key stays in this phone's keychain. Privacy: only track and artist names (what's playing, what you played, the queue around it), what you type, and answers from your on-phone listening history that a chat question needs are sent to your provider. Voice: iPhone voices, your provider's voices, or ElevenLabs with its own key. On Spotify Free, Spotify may shuffle the set and its skip limit still applies.";
+            return nil;
         case MRGSecAbout:
             if (MRGDuplicateSummary())
-                return [NSString stringWithFormat:@"Another copy of Mirage is loaded: %@. It runs next to this one and can show its own, older settings. Remove it (an injected Mirage.dylib or .deb in your signer, or a tweak folder) and install the IPA alone.\n\nMirage is free software under the GPL-3.0, built on Vitrine (github.com/meownyaaa/vitrine), itself a fork of Chroma by skopevoj (spoti.pw, up to v0.21.1).", MRGDuplicateSummary()];
-            return @"Mirage is free software under the GPL-3.0, built on Vitrine (github.com/meownyaaa/vitrine), itself a fork of Chroma by skopevoj (spoti.pw, up to v0.21.1).";
+                return [NSString stringWithFormat:@"Another copy of Mirage is loaded: %@. Install the IPA alone.", MRGDuplicateSummary()];
+            return @"GPL-3.0 · built on Vitrine.";
     }
     return nil;
 }

@@ -237,7 +237,7 @@ static NSInteger pickerIndex(MRGAddonSetting *setting, id value) {
     return s < (NSInteger)self.settings.count ? self.settings[s].title : nil;
 }
 - (NSString *)tableView:(UITableView *)t titleForFooterInSection:(NSInteger)s {
-    if (!self.settings.count) return @"This add-on has no settings of its own. The switch in the shop turns it on and off.";
+    if (!self.settings.count) return @"No settings.";
     return self.settings[s].footer;
 }
 - (UITableViewCell *)tableView:(UITableView *)t cellForRowAtIndexPath:(NSIndexPath *)ip {

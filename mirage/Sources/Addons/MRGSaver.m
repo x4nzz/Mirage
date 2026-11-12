@@ -269,8 +269,8 @@ static void savePresets(NSArray *list) {
     return @[@"File", @"On this iPhone", @"Presets"][s];
 }
 - (NSString *)tableView:(UITableView *)t titleForFooterInSection:(NSInteger)s {
-    if (s == 0) return self.note ?: @"Every change you make in Mirage is saved automatically, right away. Export makes a file you can keep or move to another phone. Background pictures are saved by name. Turn on Include background files to put the pictures in the file too. API keys stay in the keychain and are never exported. Listening history isn't part of this file.";
-    if (s == 2) return @"A preset is a named look on this iPhone, such as Gym. Applying one restores those settings. It doesn't touch your API keys.";
+    if (s == 0) return self.note ?: @"Saved automatically. API keys are never exported.";
+    if (s == 2) return nil;
     return nil;
 }
 - (UITableViewCell *)tableView:(UITableView *)t cellForRowAtIndexPath:(NSIndexPath *)ip {

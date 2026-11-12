@@ -367,7 +367,7 @@ static void removeTheme(void) {
     if (s == 1) return [self.theme[@"dynamicColors"] boolValue]
         ? @"Dynamic colors may replace this accent with the cover."
         : @"Dynamic colors will not change this theme's accent.";
-    if (s == 2 && self.theme[@"background"]) return @"Using the background replaces the one you have now. Removing the theme puts the accent back and leaves that picture in place.";
+    if (s == 2 && self.theme[@"background"]) return @"Replaces your current background.";
     return nil;
 }
 - (UITableViewCell *)swatch:(NSString *)title hex:(NSString *)hex {

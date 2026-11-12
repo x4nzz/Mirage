@@ -73,7 +73,7 @@ static NSComparisonResult cmpAdded(NSDictionary *a, NSDictionary *b) {
 }
 - (NSString *)tableView:(UITableView *)t titleForFooterInSection:(NSInteger)s {
     if (s == 0) return self.status;
-    if (s == 2) return @"Sorting and removing duplicates ask first, and can be undone here. A shuffled copy is a new playlist; undoing it removes that playlist from your library. Spotify Free can edit playlists you own. Playing a chosen order can still be shuffled by Spotify, and the skip limit still applies.";
+    if (s == 2) return @"Sorting and deduping ask first and can be undone.";
     return nil;
 }
 - (UITableViewCell *)tableView:(UITableView *)t cellForRowAtIndexPath:(NSIndexPath *)ip {
