@@ -6,6 +6,8 @@
 #import "MRGDJLog.h"
 #import <objc/runtime.h>
 #import <objc/message.h>
+#import <os/lock.h>
+#import <stdatomic.h>
 
 static NSString *const kRemoteURL = @"https://raw.githubusercontent.com/x4nzz/Mirage/main/addons/themes/catalog.json";
 static NSString *const kBundled = @"ewogICJmb3JtYXQiOiAxLAogICJ0aGVtZXMiOiBbCiAgICB7CiAgICAgICJpZCI6ICJtaWRuaWdodCIsCiAgICAgICJuYW1lIjogIk1pZG5pZ2h0IiwKICAgICAgImRlc2NyaXB0aW9uIjogIkluZGlnbyBvbiBibGFjaywgdGhlIGxhdGUtbmlnaHQgZGVmYXVsdC4iLAogICAgICAiYWNjZW50IjogIiM2RTdDRkYiLAogICAgICAiZ2xhc3NUaW50IjogIiMxNjE4MkEiLAogICAgICAiY29sb3JzIjogeyAiYmFja2dyb3VuZCI6ICIjMDAwMDAwIiwgInRleHQiOiAiI0Y0RjVGRiIsICJzZWNvbmRhcnkiOiAiIzlBQTBDMyIgfSwKICAgICAgImR5bmFtaWNDb2xvcnMiOiB0cnVlCiAgICB9LAogICAgewogICAgICAiaWQiOiAidmlueWwiLAogICAgICAibmFtZSI6ICJWaW55bCIsCiAgICAgICJkZXNjcmlwdGlvbiI6ICJXYXJtIGFtYmVyLCBsaWtlIGEgbGFtcCBvbiBhIHJlY29yZCBzbGVldmUuIFRoZSBhY2NlbnQgc3RheXMgcHV0IHdoZW4gZHluYW1pYyBjb2xvcnMgYXJlIG9uLiIsCiAgICAgICJhY2NlbnQiOiAiI0U4QTU0QiIsCiAgICAgICJnbGFzc1RpbnQiOiAiIzI0MTgwQyIsCiAgICAgICJjb2xvcnMiOiB7ICJiYWNrZ3JvdW5kIjogIiMxMjBDMDYiLCAidGV4dCI6ICIjRkZGNkU4IiwgInNlY29uZGFyeSI6ICIjQzRBMjdBIiB9LAogICAgICAiYmFja2dyb3VuZCI6ICIjMUExMDA4IiwKICAgICAgImR5bmFtaWNDb2xvcnMiOiBmYWxzZQogICAgfSwKICAgIHsKICAgICAgImlkIjogImZvcmVzdCIsCiAgICAgICJuYW1lIjogIkZvcmVzdCIsCiAgICAgICJkZXNjcmlwdGlvbiI6ICJBIGRlZXAgZ3JlZW4gdGhhdCBjYW4gZm9sbG93IHRoZSBjb3Zlci4iLAogICAgICAiYWNjZW50IjogIiMzRERDODQiLAogICAgICAiZ2xhc3NUaW50IjogIiMwRTFDMTQiLAogICAgICAiY29sb3JzIjogeyAiYmFja2dyb3VuZCI6ICIjMDYxMTBDIiwgInRleHQiOiAiI0U5RkZGMyIsICJzZWNvbmRhcnkiOiAiIzhGQjlBMCIgfSwKICAgICAgImR5bmFtaWNDb2xvcnMiOiB0cnVlCiAgICB9LAogICAgewogICAgICAiaWQiOiAib2NlYW4iLAogICAgICAibmFtZSI6ICJPY2VhbiIsCiAgICAgICJkZXNjcmlwdGlvbiI6ICJDb29sIGJsdWUgb3ZlciBhIGRhcmsgc2VhLiIsCiAgICAgICJhY2NlbnQiOiAiIzRDQzNGRiIsCiAgICAgICJnbGFzc1RpbnQiOiAiIzBBMUMyOCIsCiAgICAgICJjb2xvcnMiOiB7ICJiYWNrZ3JvdW5kIjogIiMwNjEwMTgiLCAidGV4dCI6ICIjRTdGN0ZGIiwgInNlY29uZGFyeSI6ICIjOEZCNEM5IiB9LAogICAgICAiYmFja2dyb3VuZCI6ICIjMDcxODIwIiwKICAgICAgImR5bmFtaWNDb2xvcnMiOiB0cnVlCiAgICB9LAogICAgewogICAgICAiaWQiOiAicm9zZSIsCiAgICAgICJuYW1lIjogIlJvc2UiLAogICAgICAiZGVzY3JpcHRpb24iOiAiUGluayB0aGF0IHN0YXlzIHBpbmsuIER5bmFtaWMgY29sb3JzIHdpbGwgbm90IG92ZXJyaWRlIGl0LiIsCiAgICAgICJhY2NlbnQiOiAiI0ZGNkI5QSIsCiAgICAgICJnbGFzc1RpbnQiOiAiIzJBMTIxQyIsCiAgICAgICJjb2xvcnMiOiB7ICJiYWNrZ3JvdW5kIjogIiMxNDA4MEUiLCAidGV4dCI6ICIjRkZFOEYwIiwgInNlY29uZGFyeSI6ICIjRDRBM0I0IiB9LAogICAgICAiZHluYW1pY0NvbG9ycyI6IGZhbHNlCiAgICB9LAogICAgewogICAgICAiaWQiOiAiYW1vbGVkIiwKICAgICAgIm5hbWUiOiAiQU1PTEVEIiwKICAgICAgImRlc2NyaXB0aW9uIjogIlB1cmUgYmxhY2sgYW5kIFNwb3RpZnkgZ3JlZW4uIiwKICAgICAgImFjY2VudCI6ICIjMUVENzYwIiwKICAgICAgImdsYXNzVGludCI6ICIjMDAwMDAwIiwKICAgICAgImNvbG9ycyI6IHsgImJhY2tncm91bmQiOiAiIzAwMDAwMCIsICJ0ZXh0IjogIiNGRkZGRkYiLCAic2Vjb25kYXJ5IjogIiM4RThFOTMiIH0sCiAgICAgICJkeW5hbWljQ29sb3JzIjogdHJ1ZQogICAgfSwKICAgIHsKICAgICAgImlkIjogImR1c2siLAogICAgICAibmFtZSI6ICJEdXNrIiwKICAgICAgImRlc2NyaXB0aW9uIjogIlB1cnBsZSBnbGFzcyBhdCB0aGUgZW5kIG9mIHRoZSBkYXkuIiwKICAgICAgImFjY2VudCI6ICIjQzA4NEZDIiwKICAgICAgImdsYXNzVGludCI6ICIjMUExMDI0IiwKICAgICAgImNvbG9ycyI6IHsgImJhY2tncm91bmQiOiAiIzEwMDgxOCIsICJ0ZXh0IjogIiNGNkVFRkYiLCAic2Vjb25kYXJ5IjogIiNCOUEzQ0MiIH0sCiAgICAgICJkeW5hbWljQ29sb3JzIjogdHJ1ZQogICAgfSwKICAgIHsKICAgICAgImlkIjogInBhcGVyIiwKICAgICAgIm5hbWUiOiAiUGFwZXIiLAogICAgICAiZGVzY3JpcHRpb24iOiAiV2FybSBwYXBlciBpbiBhIGRhcmsgcm9vbS4gVGhlIGNyZWFtIGFjY2VudCBpcyBmaXhlZC4iLAogICAgICAiYWNjZW50IjogIiNGMkUyQzQiLAogICAgICAiZ2xhc3NUaW50IjogIiMyQTIyMTgiLAogICAgICAiY29sb3JzIjogeyAiYmFja2dyb3VuZCI6ICIjMUMxNjEyIiwgInRleHQiOiAiI0ZGRjhFRSIsICJzZWNvbmRhcnkiOiAiI0NEQkJBNiIgfSwKICAgICAgImJhY2tncm91bmQiOiAiIzIyMUMxNiIsCiAgICAgICJkeW5hbWljQ29sb3JzIjogZmFsc2UKICAgIH0sCiAgICB7CiAgICAgICJpZCI6ICJjaGVycnkiLAogICAgICAibmFtZSI6ICJDaGVycnkiLAogICAgICAiZGVzY3JpcHRpb24iOiAiQSByZWQgYWNjZW50IHRoYXQgZHluYW1pYyBjb2xvcnMgbGVhdmUgYWxvbmUuIiwKICAgICAgImFjY2VudCI6ICIjRkY0NTNBIiwKICAgICAgImdsYXNzVGludCI6ICIjMkExMDEyIiwKICAgICAgImNvbG9ycyI6IHsgImJhY2tncm91bmQiOiAiIzE2MDgwQSIsICJ0ZXh0IjogIiNGRkVDRUEiLCAic2Vjb25kYXJ5IjogIiNENEEwOUMiIH0sCiAgICAgICJkeW5hbWljQ29sb3JzIjogZmFsc2UKICAgIH0sCiAgICB7CiAgICAgICJpZCI6ICJpY2UiLAogICAgICAibmFtZSI6ICJJY2UiLAogICAgICAiZGVzY3JpcHRpb24iOiAiUGFsZSBjeWFuIHRoYXQgY2FuIHN0aWxsIGZvbGxvdyB0aGUgY292ZXIuIiwKICAgICAgImFjY2VudCI6ICIjOUJFN0ZGIiwKICAgICAgImdsYXNzVGludCI6ICIjMTAxODIwIiwKICAgICAgImNvbG9ycyI6IHsgImJhY2tncm91bmQiOiAiIzBDMTIxNiIsICJ0ZXh0IjogIiNGMkZCRkYiLCAic2Vjb25kYXJ5IjogIiNBOUM0Q0UiIH0sCiAgICAgICJkeW5hbWljQ29sb3JzIjogdHJ1ZQogICAgfQogIF0KfQo=";
@@ -126,10 +128,30 @@ static NSInteger rgbOf(NSDictionary *theme, NSString *key) {
     return hexColor(theme[key], &rgb) ? rgb : -1;
 }
 
+// The applied theme, parsed once and kept until it changes. Before 0.6.4 every call read Spotify's defaults and parsed
+// the theme's JSON, and MRGLookLiveRGB (so MRGAccent, and every UIColor made anywhere in the app through the swizzle
+// below) called it: thousands of JSON parses a second while scrolling or launching.
+static os_unfair_lock sThemeLock = OS_UNFAIR_LOCK_INIT;
+static NSDictionary *sAppliedCache;
+static BOOL sAppliedLoaded;
+static void forgetApplied(void) {
+    os_unfair_lock_lock(&sThemeLock);
+    sAppliedLoaded = NO;
+    sAppliedCache = nil;
+    os_unfair_lock_unlock(&sThemeLock);
+}
 NSDictionary *MRGAppliedTheme(void) {
+    os_unfair_lock_lock(&sThemeLock);
+    if (sAppliedLoaded) { NSDictionary *t = sAppliedCache; os_unfair_lock_unlock(&sThemeLock); return t; }
+    os_unfair_lock_unlock(&sThemeLock);
     NSData *data = [D() dataForKey:@"mirage.theme.applied"];
     id json = data.length ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
-    return validTheme(json);
+    NSDictionary *theme = validTheme(json);
+    os_unfair_lock_lock(&sThemeLock);
+    sAppliedCache = theme;
+    sAppliedLoaded = YES;
+    os_unfair_lock_unlock(&sThemeLock);
+    return theme;
 }
 
 BOOL MRGThemeAllowsDynamicColors(void) {
@@ -175,10 +197,20 @@ static BOOL near(CGFloat r, CGFloat g, CGFloat b, NSInteger rgb) {
     return fabs(r - ((rgb >> 16) & 255) / 255.0) < 0.025 && fabs(g - ((rgb >> 8) & 255) / 255.0) < 0.025 && fabs(b - (rgb & 255) / 255.0) < 0.025;
 }
 
+// What the UIColor swizzle reads: two numbers, refreshed on the main thread whenever the look can change
+// (MRGLookRefresh, a settings change, a theme applied or removed). The swizzle runs for every color made on any
+// thread, so it never reads defaults, parses JSON or calls into an add-on.
+static _Atomic long sLiveRGB = -1;
+static _Atomic long sStoredRGB = 0x1ED760;
+static void recomputeLive(void) {
+    atomic_store(&sStoredRGB, (long)storedAccent());
+    atomic_store(&sLiveRGB, (long)MRGLookLiveRGB());
+}
+
 static BOOL retint(CGFloat *r, CGFloat *g, CGFloat *b) {
-    NSInteger live = MRGLookLiveRGB();
+    NSInteger live = atomic_load_explicit(&sLiveRGB, memory_order_relaxed);
     if (live < 0 || near(*r, *g, *b, live)) return NO;
-    NSInteger stored = storedAccent();
+    NSInteger stored = atomic_load_explicit(&sStoredRGB, memory_order_relaxed);
     if (!near(*r, *g, *b, 0x1ED760) && !near(*r, *g, *b, 0x1DB954) && !near(*r, *g, *b, 0x37F200) && !near(*r, *g, *b, stored)) return NO;
     *r = ((live >> 16) & 255) / 255.0;
     *g = ((live >> 8) & 255) / 255.0;
@@ -244,7 +276,9 @@ static void installSwizzle(void) {
 }
 
 void MRGLookRefresh(void) {
-    installSwizzle();
+    recomputeLive();
+    // Only swizzled once there is something to repaint (a theme or dynamic colors); before that, UIColor is untouched.
+    if (atomic_load(&sLiveRGB) >= 0) installSwizzle();
     NSInteger switches = sSwitchRGB ? sSwitchRGB() : MRGLookLiveRGB();
     UIColor *glass = MRGLookGlassTint();
     NSUInteger seen = 0;
@@ -257,9 +291,12 @@ void MRGLookRefresh(void) {
 #pragma mark - apply / remove
 
 static void storeApplied(NSDictionary *theme) {
-    if (!theme) { [D() removeObjectForKey:@"mirage.theme.applied"]; return; }
+    forgetApplied();
+    if (!theme) { [D() removeObjectForKey:@"mirage.theme.applied"]; recomputeLive(); return; }
     NSData *data = [NSJSONSerialization dataWithJSONObject:theme options:0 error:nil];
     if (data) [D() setObject:data forKey:@"mirage.theme.applied"];
+    forgetApplied();
+    recomputeLive();
 }
 
 static NSURL *backgroundFile(NSDictionary *theme) {
@@ -508,10 +545,18 @@ static void refreshRemote(void (^done)(void)) {
 }
 
 __attribute__((constructor)) static void mrgThemesConstructor(void) {
-    publish();
+    // Nothing on the launch path: the catalog (a base64 JSON) is decoded on the main queue's first turn.
     dispatch_async(dispatch_get_main_queue(), ^{
-        installSwizzle();
-        if (MRGAppliedTheme()) MRGLookRefresh();
-        refreshRemote(nil);
+        @try {
+            publish();
+            if (MRGAppliedTheme()) MRGLookRefresh(); else recomputeLive();
+        } @catch (NSException *e) {}
+        // A settings file loaded, or a preset, can change the applied theme behind storeApplied's back.
+        [NSNotificationCenter.defaultCenter addObserverForName:MRGSettingsChangedNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
+            forgetApplied();
+            recomputeLive();
+        }];
     });
+    // The theme catalog is fetched once Spotify has been up a little, never on the launch path.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ refreshRemote(nil); });
 }
