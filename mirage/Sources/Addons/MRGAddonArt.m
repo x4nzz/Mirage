@@ -9,10 +9,23 @@ typedef struct { const char *addon; const char *kind; const unsigned char *bytes
 extern const MRGArtBlob MRGArtBlobs[];
 extern const size_t MRGArtBlobCount;
 
-static NSArray<NSString *> *knownIDs(void) {
-    return @[@"vinyl", @"dynamic-colors", @"playlist-tools", @"genres", @"popup-lyrics", @"trash", @"shuffle-plus"];
+// 0.6.7: an add-on has art when the compiled-in set has its cover and icon. 0.6.6 kept a hand-written list of the
+// first seven ids here, so the eight add-ons added in 0.6.6 (whose art was compiled in) still drew the generic
+// puzzle-piece picture. The table itself is the only list now.
+static BOOL hasBlob(NSString *addonID, const char *kind) {
+    const char *a = addonID.UTF8String;
+    if (!a) return NO;
+    for (size_t i = 0; i < MRGArtBlobCount; i++) if (!strcmp(MRGArtBlobs[i].kind, kind) && !strcmp(MRGArtBlobs[i].addon, a)) return YES;
+    return NO;
 }
-BOOL MRGAddonHasArt(NSString *addonID) { return addonID.length && [knownIDs() containsObject:addonID]; }
+BOOL MRGAddonHasArt(NSString *addonID) {
+    if (!addonID.length || [addonID isEqualToString:@"generic"]) return NO;
+    static NSMutableDictionary<NSString *, NSNumber *> *known;
+    if (!known) known = [NSMutableDictionary dictionary];
+    NSNumber *hit = known[addonID];
+    if (!hit) { hit = @(hasBlob(addonID, "cover") && hasBlob(addonID, "icon")); known[addonID] = hit; }
+    return hit.boolValue;
+}
 
 // The decoded original (3x), once per add-on and kind.
 static UIImage *original(NSString *addonID, NSString *kind) {

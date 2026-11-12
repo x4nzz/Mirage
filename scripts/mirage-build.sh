@@ -72,6 +72,7 @@ if [ "$WITH_VITRINE" = 1 ]; then
 fi
 
 echo "==> building Mirage"
+python3 "$ROOT/scripts/mirage-check-art.py" "$ROOT/mirage/Sources" || exit 1
 env -u MAKELEVEL gmake -C "$ROOT/mirage" clean package >"$WORK/mirage.log" 2>&1 || { tail -40 "$WORK/mirage.log"; exit 1; }
 MIRAGE_DEB="$(ls -t "$ROOT"/mirage/packages/*.deb | head -1)"
 FILES+=("$MIRAGE_DEB")
