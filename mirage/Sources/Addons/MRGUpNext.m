@@ -20,6 +20,7 @@ static char kRowKey, kCardKey, kHoldKey;
 
 static BOOL showRow(void) { return MRGAddonFlag(kAddon, @"row", YES); }
 static BOOL holdCard(void) { return MRGAddonFlag(kAddon, @"card", YES); }
+static BOOL nearEndOnly(void) { return MRGAddonInteger(kAddon, @"when", 0) == 1; }   // the row only in a song's last 30 s
 
 static NSArray<NSDictionary *> *sNext;   // the next few, newest read
 static NSHashTable *sViews;              // rows and cards on screen, to refresh
@@ -71,6 +72,41 @@ static UIVisualEffectView *glass(CGFloat radius) {
     UIVisualEffectView *_glass;
     UIImageView *_art;
     UILabel *_kicker, *_title, *_then;
+    NSTimer *_clock;
+    BOOL _hasNext;
+}
+- (void)dealloc { [_clock invalidate]; [NSNotificationCenter.defaultCenter removeObserver:self]; }
+- (void)didMoveToWindow {
+    [super didMoveToWindow];
+    [self updateClock];
+}
+// Near the end only: the row fades in over the song's last 30 seconds (checked every 2 s, every 5 s in Low Power Mode).
+- (void)updateClock {
+    BOOL run = self.window && nearEndOnly() && MRGAddonInstalled(kAddon);
+    NSTimeInterval every = NSProcessInfo.processInfo.isLowPowerModeEnabled ? 5 : 2;
+    if (!run) { [_clock invalidate]; _clock = nil; [self place]; return; }
+    if (!_clock || fabs(_clock.timeInterval - every) > 0.01) {
+        [_clock invalidate];
+        __weak typeof(self) weak = self;
+        _clock = [NSTimer scheduledTimerWithTimeInterval:every repeats:YES block:^(NSTimer *t) {
+            MRGUpNextRow *s = weak;
+            if (!s || !s.window) { [t invalidate]; return; }
+            @try { [s place]; } @catch (NSException *e) {}
+        }];
+        _clock.tolerance = 0.5;
+    }
+    [self place];
+}
+- (void)place {
+    BOOL show = _hasNext;
+    if (show && nearEndOnly()) {
+        double pos = 0, dur = 0;
+        show = MRGPlayerProgress(&pos, &dur) && dur > 40 && dur - pos <= 30;
+    }
+    if (show) self.hidden = NO;
+    CGFloat want = show ? 1 : 0;
+    if (fabs(self.alpha - want) < 0.01) { if (!show) self.hidden = YES; return; }
+    [UIView animateWithDuration:0.35 animations:^{ self.alpha = want; } completion:^(BOOL f) { if (self.alpha < 0.01) self.hidden = YES; }];
 }
 - (instancetype)initWithFrame:(CGRect)frame {
     if (!(self = [super initWithFrame:frame])) return nil;
@@ -93,6 +129,7 @@ static UIVisualEffectView *glass(CGFloat radius) {
     _then.textColor = [UIColor colorWithWhite:1 alpha:0.62];
     [self addSubview:_glass];
     for (UIView *v in @[_art, _kicker, _title, _then]) [_glass.contentView addSubview:v];
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(updateClock) name:MRGSettingsChangedNotification object:nil];
     return self;
 }
 - (void)layoutSubviews {
@@ -113,8 +150,9 @@ static UIVisualEffectView *glass(CGFloat radius) {
 }
 - (void)show:(NSArray<NSDictionary *> *)next {
     _kicker.textColor = MRGAccent();
-    if (!next.count) { self.hidden = YES; return; }
-    self.hidden = NO;
+    _hasNext = next.count > 0;
+    [self updateClock];
+    if (!next.count) return;
     _title.text = line(next[0]);
     NSMutableArray *rest = [NSMutableArray array];
     for (NSUInteger i = 1; i < MIN(next.count, (NSUInteger)3); i++) [rest addObject:next[i][@"title"] ?: @"?"];
@@ -317,9 +355,11 @@ static void applyCover(UIView *tilt) {
 - (NSString *)addonBatteryNote { return @"Low: one queue read per song, no animation."; }
 - (NSArray<MRGAddonSetting *> *)addonSettings {
     MRGAddonSetting *row = [MRGAddonSetting toggle:@"row" title:@"Row on the cover" fallback:YES];
+    MRGAddonSetting *when = [MRGAddonSetting picker:@"when" title:@"Row shows" options:@[@"Always", @"Near the end"] values:@[@0, @1] fallback:@0];
+    when.footer = @"Near the end shows the row over a song's last 30 seconds, like a radio's coming-up.";
     MRGAddonSetting *card = [MRGAddonSetting toggle:@"card" title:@"Card on hold" fallback:YES];
     card.footer = MRGNowKitRunning() ? @"Hold the middle of the cover; the sides stay Vitrine's." : @"Off on this Spotify build (see About).";
-    return @[row, card];
+    return @[row, when, card];
 }
 - (void)addonDidEnable { fetch(); }
 - (void)addonDidDisable {}
