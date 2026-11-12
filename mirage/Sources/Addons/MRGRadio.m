@@ -23,6 +23,7 @@
 #import "MRGHistory.h"
 #import "MRGTrash.h"
 #import "MRGNowKit.h"
+#import "DJ/MRGDJ.h"
 #import "MRGDJLog.h"
 
 static NSString *const kAddon = @"radio";
@@ -166,8 +167,16 @@ static void stopRadio(NSString *why) {
     changed();
 }
 
+// The DJ's set owns the queue while it plays: the radio waits rather than queueing over it.
+static BOOL djHasTheQueue(void) { return MRGDJ.shared.state != MRGDJIdle; }
+
 static void topUp(void) {
     if (!sOn || sFilling) return;
+    if (djHasTheQueue()) {
+        NSString *wait = @"Waiting · the DJ has the queue";
+        if (![sStatus isEqualToString:wait]) { sStatus = wait; changed(); }
+        return;
+    }
     sFilling = YES;
     MRGFetchQueue(^(NSArray *queued, NSArray *upNext, NSString *error) {
         NSMutableArray *waiting = [NSMutableArray array];
@@ -261,13 +270,21 @@ static void startRadio(void) {
 }
 
 // Each song change: how the last one went, then the queue topped up.
+// 0.6.8 root cause of the radio queueing three songs every half second (diagnostics 16:01:03 to 16:01:07): while
+// Spotify's queue is being changed its player state flips between the playing song and the next for a moment, and
+// Mirage's player reports each flip as a track change. The radio took every one as a song the listener skipped in
+// its first 30 seconds, so the artist sank (1.0 → 0.10 in 3 s), its queued picks were taken out as "sunk" and new
+// ones queued, which flipped the state again. Now a notice for the song already playing is ignored, a change within
+// 3 seconds of the last is churn (nothing is scored), and nothing is queued or scored while a DJ set runs.
 static void trackChanged(NSDictionary *info) {
     if (!sOn) return;
+    NSString *uri = info[@"uri"];
+    if (uri.length && [uri isEqualToString:sCurURI ?: @""]) return;
     NSString *ctx = MRGPlayerContextURI();
     // Spotify's own autoplay after a playlist ends (a station) is not the listener choosing: the radio carries on.
     BOOL autoplay = [ctx hasPrefix:@"spotify:station:"] || [ctx containsString:@"autoplay"];
     if (autoplay) sContext = ctx;
-    if (sContext.length && ctx.length && ![ctx isEqualToString:sContext] && ![sOurs containsObject:info[@"uri"] ?: @""]) {
+    if (sContext.length && ctx.length && ![ctx isEqualToString:sContext] && ![sOurs containsObject:info[@"uri"] ?: @""] && !djHasTheQueue()) {
         stopRadio(@"Off · you started something else");
         return;
     }
@@ -275,7 +292,8 @@ static void trackChanged(NSDictionary *info) {
     CFTimeInterval held = CACurrentMediaTime() - sCurStart;
     if (sCurURI && sCurArtist && sCurStart > 0) {
         BOOL ours = [sOurs containsObject:sCurURI];
-        if (held < 30) scale(sCurArtist, ours ? 0.6 : 0.8, @"skipped");
+        if (held < 3 || djHasTheQueue()) {}   // churn, or the DJ moving its set along: not the listener skipping
+        else if (held < 30) scale(sCurArtist, ours ? 0.6 : 0.8, @"skipped");
         else if ((sCurDuration > 0 && held >= sCurDuration * 0.8) || held >= 150) scale(sCurArtist, 1.1, @"played through");
     }
     sCurURI = info[@"uri"];
