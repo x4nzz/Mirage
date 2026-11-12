@@ -92,5 +92,5 @@ if [ "$WITH_VITRINE" = 1 ]; then
   fi
 fi
 
-python3 "$ROOT/scripts/mirage-ipa.py" verify "$OUT"
+python3 "$ROOT/scripts/mirage-ipa.py" verify "$OUT" "$MRG_VERSION"
 echo "==> done: $OUT"

@@ -7,7 +7,7 @@
   mirage-ipa.py finish <ipa> <Payload/X.app/> <insert-dylib.py> [--icons DIR]
   mirage-ipa.py verify <ipa>
 """
-import io, os, plistlib, re, shutil, struct, subprocess, sys, tempfile, zipfile
+import hashlib, io, os, plistlib, re, shutil, struct, subprocess, sys, tempfile, zipfile
 
 LC_REQ_DYLD = 0x80000000
 LC_LOAD_DYLIB, LC_LOAD_WEAK_DYLIB, LC_ENCRYPTION_INFO_64 = 0xC, 0x18 | LC_REQ_DYLD, 0x2C
@@ -146,7 +146,7 @@ def cmd_finish(ipa, app, insert_dylib, icons=None):
     shutil.rmtree(work)
 
 
-def cmd_verify(ipa):
+def cmd_verify(ipa, want=None):
     with zipfile.ZipFile(ipa) as z:
         bad = z.testzip()
         if bad:
@@ -166,6 +166,22 @@ def cmd_verify(ipa):
         for need in ('Mirage.dylib', 'spotifyglass.dylib'):
             if not any(need in d for d in injected):
                 print(f'    warning: {need} is not in the load commands')
+        # Exactly one Mirage: every Mach-O in the app that carries Mirage's settings class, and the version it says.
+        copies = []
+        for n in sorted(names):
+            if not n.startswith(app) or n.endswith('/'):
+                continue
+            data = z.read(n)
+            if data[:4] not in (b'\xcf\xfa\xed\xfe', b'\xca\xfe\xba\xbe') or b'MRGSettingsController' not in data:
+                continue
+            versions = sorted(set(re.findall(rb'\x000\.(\d+)\.(\d+)\x00', data)), key=lambda t: (int(t[0]), int(t[1])))
+            ver = ('0.%s.%s' % (versions[-1][0].decode(), versions[-1][1].decode())) if versions else '?'
+            copies.append((n, ver))
+            print(f'    Mirage image: {n} (version {ver}, md5 {hashlib.md5(data).hexdigest()})')
+        if len(copies) != 1:
+            sys.exit(f'expected exactly one Mirage image in the IPA, found {len(copies)}')
+        if want and copies[0][1] != want:
+            sys.exit(f'Mirage in the IPA is {copies[0][1]}, expected {want}')
         watch = any(n.startswith(app + 'Watch/') for n in names)
         print(f'    Watch app removed: {not watch}; PlugIns: ' +
               ', '.join(sorted({n.split("/")[3] for n in names if n.startswith(app + "PlugIns/") and n.count("/") > 3})))
