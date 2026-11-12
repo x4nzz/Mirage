@@ -49,8 +49,9 @@ static CGFloat fontSize(void) { return MIN(34, MAX(15, MRGAddonNumber(kAddon, @"
 @implementation MRGPopupLyricsView {
     UILabel *_now, *_next;
     NSTimer *_timer;
-    NSString *_lastShown;
+    NSString *_lastShown, *_asked;
 }
+- (void)dealloc { [_timer invalidate]; [NSNotificationCenter.defaultCenter removeObserver:self]; }
 - (instancetype)initWithFrame:(CGRect)frame {
     if (!(self = [super initWithFrame:frame])) return nil;
     self.userInteractionEnabled = NO;
@@ -76,7 +77,8 @@ static CGFloat fontSize(void) { return MIN(34, MAX(15, MRGAddonNumber(kAddon, @"
         [_next.bottomAnchor constraintLessThanOrEqualToAnchor:g.bottomAnchor],
     ]];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(refresh) name:MRGPlayerTrackChangedNotification object:nil];
-    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(refresh) name:MRGSettingsChangedNotification object:nil];
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(changed) name:MRGSettingsChangedNotification object:nil];
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(changed) name:NSProcessInfoPowerStateDidChangeNotification object:nil];
     NSString * __strong *kept = (NSString * __strong *)dlsym(RTLD_DEFAULT, "SGKaraokeLinesKeptNotification");
     if (kept && [*kept isKindOfClass:NSString.class])
         [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(refresh) name:*kept object:nil];
@@ -85,10 +87,28 @@ static CGFloat fontSize(void) { return MIN(34, MAX(15, MRGAddonNumber(kAddon, @"
 - (CGFloat)wantedHeight { return fontSize() * 2.6 + 20; }
 - (void)didMoveToWindow {
     [super didMoveToWindow];
+    [self updateTimer];
+}
+// The line advances 4 times a second while Home is on screen, the add-on is on and Low Power Mode is off. Re-checked
+// when any of those change (0.6.0 only checked when the view joined a window, so turning it on, or Low Power Mode
+// going off, left the line frozen until Home was rebuilt). The timer holds a weak proxy, not the view.
+- (void)updateTimer {
+    BOOL want = self.window && !NSProcessInfo.processInfo.isLowPowerModeEnabled && MRGAddonInstalled(kAddon);
+    if (want && _timer) return;
     [_timer invalidate];
     _timer = nil;
-    if (!self.window || MRGEffectsPaused() || !MRGAddonInstalled(kAddon)) { [self refresh]; return; }
-    _timer = [NSTimer scheduledTimerWithTimeInterval:0.25 target:self selector:@selector(refresh) userInfo:nil repeats:YES];
+    if (want) {
+        __weak MRGPopupLyricsView *weak = self;
+        _timer = [NSTimer scheduledTimerWithTimeInterval:0.25 repeats:YES block:^(NSTimer *t) {
+            MRGPopupLyricsView *view = weak;
+            if (!view) { [t invalidate]; return; }
+            @try { [view refresh]; } @catch (NSException *e) {}
+        }];
+    }
+    [self refresh];
+}
+- (void)changed {
+    [self updateTimer];
 }
 - (void)refresh {
     if (!MRGAddonInstalled(kAddon)) { self.hidden = YES; return; }
@@ -119,7 +139,8 @@ static CGFloat fontSize(void) { return MIN(34, MAX(15, MRGAddonNumber(kAddon, @"
     }
     NSArray *lines = track.length ? sgLines(track) : nil;
     if (!lines.count) {
-        if (sgAsk && track.length) sgAsk(track);
+        // Asked once per song, not on every tick (0.6.0 asked Vitrine for the lyrics 4 times a second until they came).
+        if (sgAsk && track.length && ![track isEqualToString:_asked]) { _asked = [track copy]; sgAsk(track); }
         _now.text = @"♪";
         _next.text = nil;
         return;
@@ -135,8 +156,12 @@ static CGFloat fontSize(void) { return MIN(34, MAX(15, MRGAddonNumber(kAddon, @"
 }
 @end
 
+static NSHashTable<UIView *> *sPages;
+
 void MRGPopupPlace(UIView *page) {
     if (![page isKindOfClass:UIView.class]) return;
+    if (!sPages) sPages = [NSHashTable weakObjectsHashTable];
+    [sPages addObject:page];
     MRGPopupLyricsView *view = objc_getAssociatedObject(page, &kViewKey);
     if (!MRGAddonInstalled(kAddon)) { view.hidden = YES; return; }
     if (!view) {
@@ -169,8 +194,27 @@ void MRGPopupPlace(UIView *page) {
     idle.footer = @"The lines, the timing and which line is current come from Vitrine. This row shows the current line and the next one, and it doesn't take touches, so Home keeps scrolling.";
     return @[size, idle];
 }
-- (void)addonDidEnable {}
-- (void)addonDidDisable {}
+// On or off takes effect on Home right away: the pages Mirage has seen are laid out again, and a Home that is already
+// on screen but was never seen (the add-on was off) is found through its view controller.
+static void relayoutHome(void) {
+    for (UIView *page in sPages.allObjects) { [page setNeedsLayout]; MRGPopupPlace(page); }
+    Class home = NSClassFromString(@"_TtC19Home_FunkisPageImpl20FunkisViewController");
+    if (!home) return;
+    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+        if (![scene isKindOfClass:UIWindowScene.class]) continue;
+        for (UIWindow *window in ((UIWindowScene *)scene).windows) {
+            NSMutableArray *stack = [NSMutableArray arrayWithObject:window];
+            NSUInteger seen = 0;
+            while (stack.count && seen < 3000) {
+                UIView *view = stack.lastObject; [stack removeLastObject]; seen++;
+                if ([view.nextResponder isKindOfClass:home]) { MRGPopupPlace(view); continue; }
+                [stack addObjectsFromArray:view.subviews];
+            }
+        }
+    }
+}
+- (void)addonDidEnable { dispatch_async(dispatch_get_main_queue(), ^{ @try { relayoutHome(); } @catch (NSException *e) {} }); }
+- (void)addonDidDisable { @try { for (UIView *page in sPages.allObjects) MRGPopupPlace(page); } @catch (NSException *e) {} }
 @end
 
 __attribute__((constructor)) static void mrgPopupConstructor(void) { MRGAddonRegister([MRGPopupAddon new]); }
