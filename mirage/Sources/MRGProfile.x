@@ -319,6 +319,8 @@ static UIColor *firstTint(NSArray *cgColors) {
     _link = nil;
     if (self.window) {
         _link = [CADisplayLink displayLinkWithTarget:self selector:@selector(follow)];
+        // Low Power Mode: half the frames (the follow is a cheap compare, but it wakes the main thread every frame).
+        _link.preferredFramesPerSecond = NSProcessInfo.processInfo.isLowPowerModeEnabled ? 30 : 0;
         [_link addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
         [self follow];
     }

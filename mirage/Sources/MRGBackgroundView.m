@@ -430,6 +430,8 @@ static NSMutableDictionary<NSString *, UIImage *> *sg_stills;
     _link = nil;
     if (self.window && !self.fitsBounds) {
         _link = [CADisplayLink displayLinkWithTarget:self selector:@selector(tick:)];
+        // Low Power Mode: half the frames (the follow is a cheap compare, but it wakes the main thread every frame).
+        _link.preferredFramesPerSecond = NSProcessInfo.processInfo.isLowPowerModeEnabled ? 30 : 0;
         [_link addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
     }
     if (self.window) [self pinCanvas];
