@@ -20,6 +20,8 @@ static BOOL installed(void) { return MRGAddonInstalled(kAddon) && MRGNowKitRunni
 static BOOL focusOn(void) { return installed() && MRGAddonFlag(kAddon, @"on", NO); }
 static BOOL keepLyrics(void) { return MRGAddonFlag(kAddon, @"lyrics", NO); }
 static BOOL oled(void) { return MRGAddonFlag(kAddon, @"oled", YES); }
+static BOOL keepTitle(void) { return MRGAddonFlag(kAddon, @"title", NO); }
+static BOOL keepScrubber(void) { return MRGAddonFlag(kAddon, @"scrubber", NO); }
 
 static void refreshIfChanged(void);
 
@@ -118,7 +120,13 @@ static void applyPart(MRGNowPart part, id owner) {
     if (!on) return;   // turning off restores everything at once (MRGNowRestoreAll), nothing per part
     UIView *root = vc.viewIfLoaded;
     switch (part) {
-        case MRGNowHeader: case MRGNowInfo: case MRGNowDuration: case MRGNowFloating:
+        case MRGNowInfo:
+            if (!keepTitle()) hideChildren(root);
+            break;
+        case MRGNowDuration:
+            if (!keepScrubber()) hideChildren(root);
+            break;
+        case MRGNowHeader: case MRGNowFloating:
             hideChildren(root);
             break;
         case MRGNowControls: {
@@ -152,9 +160,11 @@ static void applyPart(MRGNowPart part, id owner) {
 - (NSArray<MRGAddonSetting *> *)addonSettings {
     MRGAddonSetting *on = [MRGAddonSetting toggle:@"on" title:@"Focus mode on" fallback:NO];
     MRGAddonSetting *black = [MRGAddonSetting toggle:@"oled" title:@"True black background" fallback:YES];
+    MRGAddonSetting *title = [MRGAddonSetting toggle:@"title" title:@"Keep the title and artist" fallback:NO];
+    MRGAddonSetting *scrubber = [MRGAddonSetting toggle:@"scrubber" title:@"Keep the scrubber" fallback:NO];
     MRGAddonSetting *lyrics = [MRGAddonSetting toggle:@"lyrics" title:@"Keep the lyrics preview" fallback:NO];
     lyrics.footer = MRGNowKitRunning() ? @"Or tap ◎ in the player, between Connect and the queue." : @"Off on this Spotify build (see About).";
-    return @[on, black, lyrics];
+    return @[on, black, title, scrubber, lyrics];
 }
 - (void)addonDidEnable {}
 - (void)addonDidDisable { MRGAddonSetFlag(kAddon, @"on", NO); }
@@ -164,7 +174,7 @@ static void applyPart(MRGNowPart part, id owner) {
 // A Focus setting (or the add-on) changed: everything Focus hid comes back, then what stays hidden is hidden again.
 static NSString *sLastState;
 static void refreshIfChanged(void) {
-    NSString *now = [NSString stringWithFormat:@"%d%d%d%d", installed(), focusOn(), oled(), keepLyrics()];
+    NSString *now = [NSString stringWithFormat:@"%d%d%d%d%d%d", installed(), focusOn(), oled(), keepLyrics(), keepTitle(), keepScrubber()];
     if ([now isEqualToString:sLastState]) return;
     BOOL first = sLastState == nil;
     sLastState = now;
