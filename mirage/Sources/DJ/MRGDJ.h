@@ -93,3 +93,6 @@ void MRGDJSetMirrorStrength(NSInteger level);
 NSArray<NSString *> *MRGDJMirrorStrengthNames(void);
 // The listener's taste from the on-phone history (on repeat, top and recent artists, throwbacks) as prompt text, or nil.
 NSString *MRGDJTasteText(void);
+
+// 0.6.7: whether a request asks for its music at once (else a set is lined up after the song that is on).
+BOOL MRGDJWantsNow(NSString *request);
