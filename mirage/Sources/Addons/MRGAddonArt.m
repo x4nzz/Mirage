@@ -2,6 +2,8 @@
 #import "Addons/MRGAddon.h"
 #import "MRGDJLog.h"
 
+NSString *MRGAddonSymbol(NSString *addonID);
+
 static NSArray<NSString *> *knownIDs(void) {
     return @[@"vinyl", @"dynamic-colors", @"playlist-tools", @"genres", @"popup-lyrics", @"trash", @"shuffle-plus"];
 }
@@ -281,6 +283,32 @@ static void drawGeneric(CGContextRef c, CGSize S, UIColor *accent) {
     symbol(@"puzzlepiece.extension.fill", CGRectInset(badge, bs * 0.22, bs * 0.22), UIColor.whiteColor, UIFontWeightBold);
 }
 
+// The same finish on every picture, so the shop reads as one set: the add-on's symbol as a faint watermark, a soft
+// vignette, a glass highlight across the top and a thin inner rim.
+static void finish(CGContextRef c, CGSize S, NSString *addonID) {
+    CGRect all = (CGRect){CGPointZero, S};
+    CGFloat mark = S.height * 0.9;
+    CGContextSaveGState(c);
+    CGContextSetAlpha(c, 0.05);
+    symbol(MRGAddonSymbol(addonID), CGRectMake(S.width - mark * 0.72, S.height - mark * 0.78, mark, mark), UIColor.whiteColor, UIFontWeightBlack);
+    CGContextRestoreGState(c);
+    CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+    CGFloat vig[] = {0, 0, 0, 0, 0, 0, 0, 0.42};
+    CGGradientRef g = CGGradientCreateWithColorComponents(space, vig, NULL, 2);
+    CGPoint mid = CGPointMake(S.width / 2, S.height * 0.45);
+    CGContextDrawRadialGradient(c, g, mid, MIN(S.width, S.height) * 0.35, mid, hypot(S.width, S.height) * 0.62, kCGGradientDrawsAfterEndLocation);
+    CGGradientRelease(g);
+    CGFloat shine[] = {1, 1, 1, 0.11, 1, 1, 1, 0};
+    g = CGGradientCreateWithColorComponents(space, shine, NULL, 2);
+    CGContextDrawLinearGradient(c, g, CGPointZero, CGPointMake(0, S.height * 0.42), 0);
+    CGGradientRelease(g);
+    CGColorSpaceRelease(space);
+    [[UIColor colorWithWhite:1 alpha:0.10] setStroke];
+    UIBezierPath *rim = [UIBezierPath bezierPathWithRoundedRect:CGRectInset(all, 0.75, 0.75) cornerRadius:16];
+    rim.lineWidth = 1.5;
+    [rim stroke];
+}
+
 UIImage *MRGAddonArt(NSString *addonID, CGSize size) {
     if (size.width < 10 || size.height < 10) size = CGSizeMake(640, 360);
     UIColor *accent = MRGAccent() ?: [UIColor colorWithRed:0.66 green:0.42 blue:1 alpha:1];
@@ -306,6 +334,7 @@ UIImage *MRGAddonArt(NSString *addonID, CGSize size) {
             else if ([a isEqualToString:@"trash"]) drawTrash(c, size, accent);
             else if ([a isEqualToString:@"shuffle-plus"]) drawShuffle(c, size, accent);
             else drawGeneric(c, size, accent);
+            finish(c, size, a);
         } @catch (NSException *e) {
             MRGDJLog(@"addons: art for %@ threw %@", addonID, e.reason);
         }

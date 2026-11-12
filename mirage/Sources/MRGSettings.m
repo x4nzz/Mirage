@@ -163,6 +163,7 @@ static const CGFloat kBottomChrome = 150;
 
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
+    if (!self.djOnly && !self.bgOnly && fabs(self.tableView.tableHeaderView.bounds.size.width - self.tableView.bounds.size.width) > 0.5) [self updateHero];
     BOOL modal = self.navigationController.viewControllers.firstObject == self && self.presentingViewController;
     CGFloat bottom = modal ? 0 : MAX(0, kBottomChrome - self.view.safeAreaInsets.bottom);
     UITableView *t = self.tableView;
@@ -259,18 +260,57 @@ static const CGFloat kBottomChrome = 150;
     return 48;
 }
 
+// iOS Settings-style icon tiles: the row's symbol in white on a small rounded square of the accent (red for a
+// destructive row, gray when the row is off), so every page of Mirage has the same look.
+static UIImage *tileFor(NSString *symbol, UIColor *color) {
+    if (!symbol.length) return nil;
+    static NSCache *cache;
+    if (!cache) cache = [NSCache new];
+    NSString *key = [NSString stringWithFormat:@"%@|%06lX", symbol, (long)MRGRGBFromColor(color)];
+    UIImage *hit = [cache objectForKey:key];
+    if (hit) return hit;
+    UIImage *glyph = [[UIImage systemImageNamed:symbol withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:14 weight:UIImageSymbolWeightSemibold]]
+                      imageWithTintColor:UIColor.whiteColor renderingMode:UIImageRenderingModeAlwaysOriginal];
+    if (!glyph) return nil;
+    CGFloat side = 29;
+    UIImage *img = [[[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(side, side)] imageWithActions:^(UIGraphicsImageRendererContext *ctx) {
+        CGRect r = CGRectMake(0, 0, side, side);
+        UIBezierPath *p = [UIBezierPath bezierPathWithRoundedRect:r cornerRadius:7.5];
+        [p addClip];
+        CGFloat h = 0, s = 0, b = 0, a = 1;
+        [color getHue:&h saturation:&s brightness:&b alpha:&a];
+        UIColor *lo = [UIColor colorWithHue:h saturation:s brightness:b * 0.72 alpha:1];
+        CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+        CGGradientRef g = CGGradientCreateWithColors(space, (__bridge CFArrayRef)@[(id)color.CGColor, (id)lo.CGColor], NULL);
+        CGContextDrawLinearGradient(ctx.CGContext, g, CGPointZero, CGPointMake(0, side), 0);
+        CGGradientRelease(g);
+        CGColorSpaceRelease(space);
+        CGSize z = glyph.size;
+        CGFloat k = MIN(17 / MAX(z.width, 1), 17 / MAX(z.height, 1));
+        z = CGSizeMake(z.width * k, z.height * k);
+        [glyph drawInRect:CGRectMake((side - z.width) / 2, (side - z.height) / 2, z.width, z.height)];
+    }];
+    if (img) [cache setObject:img forKey:key];
+    return img;
+}
+
 static UITableViewCell *baseCell(void) {
     UITableViewCell *c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:nil];
     c.backgroundColor = [UIColor colorWithWhite:0.11 alpha:0.78];
     c.textLabel.textColor = UIColor.whiteColor;
+    c.textLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightMedium];
+    c.detailTextLabel.font = [UIFont systemFontOfSize:15];
     c.selectionStyle = UITableViewCellSelectionStyleNone;
+    UIView *sel = [UIView new];
+    sel.backgroundColor = [UIColor colorWithWhite:1 alpha:0.08];
+    c.selectedBackgroundView = sel;
     return c;
 }
 
 - (UITableViewCell *)switchCell:(NSString *)title on:(BOOL)on tag:(NSInteger)tag symbol:(NSString *)symbol {
     UITableViewCell *c = baseCell();
     c.textLabel.text = title;
-    if (symbol) { c.imageView.image = [UIImage systemImageNamed:symbol]; c.imageView.tintColor = UIColor.whiteColor; }
+    if (symbol) c.imageView.image = tileFor(symbol, MRGAccent());
     UISwitch *sw = [UISwitch new];
     sw.on = on;
     sw.tag = tag;
@@ -311,8 +351,7 @@ static UITableViewCell *baseCell(void) {
     UITableViewCell *c = baseCell();
     c.textLabel.text = title;
     c.textLabel.textColor = !enabled ? UIColor.grayColor : destructive ? UIColor.systemRedColor : UIColor.whiteColor;
-    c.imageView.image = [UIImage systemImageNamed:symbol];
-    c.imageView.tintColor = c.textLabel.textColor;
+    c.imageView.image = tileFor(symbol, !enabled ? [UIColor colorWithWhite:0.35 alpha:1] : destructive ? UIColor.systemRedColor : MRGAccent());
     c.selectionStyle = enabled ? UITableViewCellSelectionStyleDefault : UITableViewCellSelectionStyleNone;
     c.userInteractionEnabled = enabled;
     return c;
@@ -322,8 +361,7 @@ static UITableViewCell *baseCell(void) {
     UITableViewCell *c = baseCell();
     c.textLabel.text = title;
     c.textLabel.textColor = UIColor.grayColor;
-    c.imageView.image = [UIImage systemImageNamed:symbol];
-    c.imageView.tintColor = UIColor.grayColor;
+    c.imageView.image = tileFor(symbol, [UIColor colorWithWhite:0.35 alpha:1]);
     c.detailTextLabel.text = @"Coming soon";
     c.detailTextLabel.textColor = UIColor.grayColor;
     return c;
@@ -389,7 +427,58 @@ static UITableViewCell *baseCell(void) {
 
 static NSString *ip3(NSInteger row) { return row == 3 ? @"Voice" : row == 4 ? @"Vibe" : @"Listening history"; }
 
-- (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; [self.tableView reloadData]; }
+- (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; [self.tableView reloadData]; [self updateHero]; }
+
+// The main page's header: the name, the version, and how many add-ons are on.
+- (void)updateHero {
+    if (self.djOnly || self.bgOnly || !self.isViewLoaded) return;
+    UIView *hero = self.tableView.tableHeaderView;
+    if (hero.tag != 0x4D52) {
+        hero = [[UIView alloc] initWithFrame:CGRectMake(0, 0, self.tableView.bounds.size.width, 116)];
+        hero.tag = 0x4D52;
+        UILabel *kicker = [UILabel new]; kicker.tag = 1;
+        kicker.font = [UIFont systemFontOfSize:12 weight:UIFontWeightHeavy];
+        kicker.text = @"SPOTIFY, YOUR WAY";
+        UILabel *title = [UILabel new]; title.tag = 2;
+        title.text = @"Mirage";
+        title.font = [UIFont systemFontOfSize:38 weight:UIFontWeightHeavy];
+        title.textColor = UIColor.whiteColor;
+        UILabel *chip = [UILabel new]; chip.tag = 3;
+        chip.font = [UIFont monospacedDigitSystemFontOfSize:12 weight:UIFontWeightBold];
+        chip.textAlignment = NSTextAlignmentCenter;
+        chip.layer.cornerRadius = 11;
+        chip.layer.cornerCurve = kCACornerCurveContinuous;
+        chip.clipsToBounds = YES;
+        UILabel *sub = [UILabel new]; sub.tag = 4;
+        sub.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
+        sub.textColor = [UIColor colorWithWhite:1 alpha:0.6];
+        for (UIView *v in @[kicker, title, chip, sub]) [hero addSubview:v];
+    }
+    UILabel *kicker = [hero viewWithTag:1], *title = [hero viewWithTag:2], *chip = [hero viewWithTag:3], *sub = [hero viewWithTag:4];
+    kicker.textColor = MRGAccent();
+    chip.text = [NSString stringWithFormat:@"  v%@  ", @(MRG_VERSION)];
+    chip.backgroundColor = [MRGAccent() colorWithAlphaComponent:0.22];
+    chip.textColor = MRGAccent();
+    NSUInteger on = 0, all = 0;
+    for (NSDictionary *a in MRGAddonIndex()) { if (!MRGAddonBuiltIn(a[@"id"])) continue; all++; if (MRGAddonInstalled(a[@"id"])) on++; }
+    sub.text = [NSString stringWithFormat:@"%lu of %lu add-ons on  ·  Vitrine %@", (unsigned long)on, (unsigned long)all, NSClassFromString(@"SGModSettingsRow") ? @"loaded" : @"not loaded"];
+    CGFloat x = 20 + self.tableView.safeAreaInsets.left, w = self.tableView.bounds.size.width;
+    kicker.frame = CGRectMake(x, 14, w - 2 * x, 16);
+    [title sizeToFit];
+    title.frame = CGRectMake(x, 30, title.bounds.size.width, 46);
+    [chip sizeToFit];
+    chip.frame = CGRectMake(CGRectGetMaxX(title.frame) + 10, 30 + (46 - 22) / 2 + 3, chip.bounds.size.width, 22);
+    sub.frame = CGRectMake(x, 78, w - 2 * x, 20);
+    hero.frame = CGRectMake(0, 0, w, 108);
+    self.tableView.tableHeaderView = hero;
+}
+
+- (void)tableView:(UITableView *)t willDisplayHeaderView:(UIView *)view forSection:(NSInteger)s {
+    if (![view isKindOfClass:UITableViewHeaderFooterView.class]) return;
+    UITableViewHeaderFooterView *h = (UITableViewHeaderFooterView *)view;
+    h.textLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
+    h.textLabel.textColor = [UIColor colorWithWhite:1 alpha:0.55];
+}
 
 - (void)pickProvider:(UIView *)source {
     UIAlertController *a = [UIAlertController alertControllerWithTitle:@"Provider"

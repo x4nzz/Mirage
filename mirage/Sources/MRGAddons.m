@@ -126,7 +126,7 @@ static void loadPreview(NSDictionary *a, void (^done)(UIImage *)) {
 @end
 
 @implementation MRGAddonCard {
-    UIImageView *_art;
+    UIImageView *_art, *_icon;
     UILabel *_name, *_meta, *_desc, *_state, *_badge, *_chip;
     UIView *_rule, *_dot;
     UISwitch *_switch;
@@ -144,7 +144,7 @@ static UILabel *pill(UIFont *font) {
 
 - (instancetype)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)rid {
     if (!(self = [super initWithStyle:style reuseIdentifier:rid])) return nil;
-    self.backgroundColor = [UIColor colorWithWhite:0.10 alpha:0.94];
+    self.backgroundColor = [UIColor colorWithWhite:0.10 alpha:0.86];
     self.selectionStyle = UITableViewCellSelectionStyleNone;
     _art = [UIImageView new];
     _art.contentMode = UIViewContentModeScaleAspectFill;
@@ -152,12 +152,19 @@ static UILabel *pill(UIFont *font) {
     _art.layer.cornerRadius = 16;
     _art.layer.cornerCurve = kCACornerCurveContinuous;
     _art.backgroundColor = [UIColor colorWithWhite:0.06 alpha:1];
+    _art.layer.borderWidth = 0.5;
+    _art.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.10].CGColor;
     _chip = pill([UIFont systemFontOfSize:12 weight:UIFontWeightSemibold]);
     _chip.textColor = UIColor.whiteColor;
     _chip.backgroundColor = [UIColor colorWithWhite:0 alpha:0.45];
     _badge = pill([UIFont systemFontOfSize:12 weight:UIFontWeightHeavy]);
+    _icon = [UIImageView new];
+    _icon.layer.shadowColor = UIColor.blackColor.CGColor;
+    _icon.layer.shadowOpacity = 0.35;
+    _icon.layer.shadowRadius = 5;
+    _icon.layer.shadowOffset = CGSizeMake(0, 2);
     _name = [UILabel new];
-    _name.font = [UIFont systemFontOfSize:21 weight:UIFontWeightBold];
+    _name.font = [UIFont systemFontOfSize:20 weight:UIFontWeightBold];
     _name.textColor = UIColor.whiteColor;
     _name.adjustsFontSizeToFitWidth = YES;
     _name.minimumScaleFactor = 0.8;
@@ -166,7 +173,7 @@ static UILabel *pill(UIFont *font) {
     _meta.textColor = [UIColor colorWithWhite:0.6 alpha:1];
     _desc = [UILabel new];
     _desc.font = [UIFont systemFontOfSize:15];
-    _desc.textColor = [UIColor colorWithWhite:0.82 alpha:1];
+    _desc.textColor = [UIColor colorWithWhite:0.78 alpha:1];
     _desc.numberOfLines = 0;
     _rule = [UIView new];
     _rule.backgroundColor = [UIColor colorWithWhite:1 alpha:0.08];
@@ -176,7 +183,7 @@ static UILabel *pill(UIFont *font) {
     _state.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
     _switch = [UISwitch new];
     [_switch addTarget:self action:@selector(flipped) forControlEvents:UIControlEventValueChanged];
-    for (UIView *v in @[_art, _chip, _badge, _name, _meta, _desc, _rule, _dot, _state, _switch]) { v.translatesAutoresizingMaskIntoConstraints = NO; [self.contentView addSubview:v]; }
+    for (UIView *v in @[_art, _chip, _badge, _icon, _name, _meta, _desc, _rule, _dot, _state, _switch]) { v.translatesAutoresizingMaskIntoConstraints = NO; [self.contentView addSubview:v]; }
     UILayoutGuide *g = self.contentView.layoutMarginsGuide;
     NSLayoutConstraint *bottom = [_switch.bottomAnchor constraintEqualToAnchor:self.contentView.bottomAnchor constant:-14];
     bottom.priority = UILayoutPriorityRequired - 1;
@@ -191,13 +198,17 @@ static UILabel *pill(UIFont *font) {
         [_badge.topAnchor constraintEqualToAnchor:_art.topAnchor constant:10],
         [_badge.trailingAnchor constraintEqualToAnchor:_art.trailingAnchor constant:-10],
         [_badge.heightAnchor constraintEqualToConstant:22],
-        [_name.topAnchor constraintEqualToAnchor:_art.bottomAnchor constant:14],
-        [_name.leadingAnchor constraintEqualToAnchor:g.leadingAnchor],
+        [_icon.topAnchor constraintEqualToAnchor:_art.bottomAnchor constant:14],
+        [_icon.leadingAnchor constraintEqualToAnchor:g.leadingAnchor],
+        [_icon.widthAnchor constraintEqualToConstant:44],
+        [_icon.heightAnchor constraintEqualToConstant:44],
+        [_name.topAnchor constraintEqualToAnchor:_icon.topAnchor constant:-1],
+        [_name.leadingAnchor constraintEqualToAnchor:_icon.trailingAnchor constant:12],
         [_name.trailingAnchor constraintEqualToAnchor:g.trailingAnchor],
-        [_meta.topAnchor constraintEqualToAnchor:_name.bottomAnchor constant:2],
-        [_meta.leadingAnchor constraintEqualToAnchor:g.leadingAnchor],
+        [_meta.topAnchor constraintEqualToAnchor:_name.bottomAnchor constant:1],
+        [_meta.leadingAnchor constraintEqualToAnchor:_name.leadingAnchor],
         [_meta.trailingAnchor constraintEqualToAnchor:g.trailingAnchor],
-        [_desc.topAnchor constraintEqualToAnchor:_meta.bottomAnchor constant:10],
+        [_desc.topAnchor constraintEqualToAnchor:_icon.bottomAnchor constant:12],
         [_desc.leadingAnchor constraintEqualToAnchor:g.leadingAnchor],
         [_desc.trailingAnchor constraintEqualToAnchor:g.trailingAnchor],
         [_rule.topAnchor constraintEqualToAnchor:_desc.bottomAnchor constant:14],
@@ -231,6 +242,7 @@ static UILabel *pill(UIFont *font) {
     NSString *mine = a[@"id"];
     CGFloat w = MAX(300, self.contentView.bounds.size.width);
     _art.image = MRGAddonArt(mine, CGSizeMake(w, round(w * 9 / 16)));
+    _icon.image = MRGAddonIcon(mine, 44);
     // A preview from the index is only used for add-ons this build doesn't draw itself.
     if (!MRGAddonHasArt(mine))
         loadPreview(a, ^(UIImage *img) { if (img && [self->_addon[@"id"] isEqualToString:mine]) self->_art.image = img; });
@@ -291,7 +303,7 @@ static BOOL addonHasSettings(NSDictionary *a) {
 @end
 
 @implementation MRGAddonShop {
-    UILabel *_titleLabel, *_subLabel;
+    UILabel *_titleLabel, *_subLabel, *_kickerLabel;
     NSArray<NSDictionary *> *_addons;
     NSString *_note;
     BOOL _changing, _reloadQueued;
@@ -338,6 +350,11 @@ static BOOL addonHasSettings(NSDictionary *a) {
 - (UIView *)header {
     UIView *h = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 320, 100)];
     _titleLabel = [UILabel new];
+    _kickerLabel = [UILabel new];
+    _kickerLabel.text = @"ADD-ON SHOP";
+    _kickerLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightHeavy];
+    _kickerLabel.textColor = MRGAccent();
+    [h addSubview:_kickerLabel];
     _titleLabel.text = @"Make Spotify yours";
     _titleLabel.font = [UIFont systemFontOfSize:30 weight:UIFontWeightHeavy];
     _titleLabel.textColor = UIColor.whiteColor;
@@ -356,7 +373,7 @@ static BOOL addonHasSettings(NSDictionary *a) {
 - (void)updateCount {
     NSUInteger on = 0, all = 0;
     for (NSDictionary *a in _addons) { if (MRGAddonBuiltIn(a[@"id"])) all++; if (MRGAddonInstalled(a[@"id"])) on++; }
-    _subLabel.text = [NSString stringWithFormat:@"%lu of %lu add-ons on. Flip a switch and it works right away; your choices are saved automatically. Everything is built into Mirage, nothing is downloaded and run.", (unsigned long)on, (unsigned long)all];
+    _subLabel.text = [NSString stringWithFormat:@"%lu of %lu add-ons on. A switch works right away and is saved automatically; you can also switch add-ons from the main Mirage page. Everything is built into Mirage, nothing is downloaded and run.", (unsigned long)on, (unsigned long)all];
     [self.view setNeedsLayout];
 }
 
@@ -368,10 +385,12 @@ static BOOL addonHasSettings(NSDictionary *a) {
     CGFloat w = self.tableView.bounds.size.width;
     UIEdgeInsets safe = self.tableView.safeAreaInsets;
     CGFloat x = 20 + safe.left, tw = MAX(100, w - x - 20 - safe.right);
-    _titleLabel.frame = CGRectMake(x, 10, tw, 36);
+    _kickerLabel.frame = CGRectMake(x, 8, tw, 16);
+    _kickerLabel.textColor = MRGAccent();
+    _titleLabel.frame = CGRectMake(x, 26, tw, 36);
     CGFloat sh = ceil([_subLabel sizeThatFits:CGSizeMake(tw, CGFLOAT_MAX)].height);
-    _subLabel.frame = CGRectMake(x, 50, tw, sh);
-    CGRect f = CGRectMake(0, 0, w, 50 + sh + 10);
+    _subLabel.frame = CGRectMake(x, 66, tw, sh);
+    CGRect f = CGRectMake(0, 0, w, 66 + sh + 12);
     if (!CGRectEqualToRect(h.frame, f)) { h.frame = f; self.tableView.tableHeaderView = h; }
 }
 
