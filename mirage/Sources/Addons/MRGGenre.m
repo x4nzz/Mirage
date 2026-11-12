@@ -75,7 +75,7 @@ static NSString *joinGenres(NSArray *genres) {
 }
 
 static void publish(NSString *text) {
-    if ([text isEqualToString:sShowing ?: @""]) return;
+    if ((!text.length && !sShowing.length) || [text isEqualToString:sShowing]) return;
     sShowing = [text copy];
     MRGPostChange();
     Class page = NSClassFromString(@"_TtC21NowPlaying_ScrollImpl27NPVBackgroundViewController");
@@ -108,6 +108,9 @@ static void resolve(NSDictionary *now) {
     NSArray *cached = [sCache[key] isKindOfClass:NSArray.class] ? sCache[key] : nil;
     if (cached) { publish(joinGenres(cached)); return; }
     void (^keep)(NSDictionary *) = ^(NSDictionary *artistInfo) {
+        // No answer (offline, no token yet) is not "no genres": nothing is cached, so the next song asks again.
+        // 0.6.0 cached an empty list and that artist never showed genres again.
+        if (![artistInfo isKindOfClass:NSDictionary.class]) { if ([MRGNowPlaying()[@"uri"] isEqual:now[@"uri"]]) publish(nil); return; }
         NSArray *genres = [artistInfo[@"genres"] isKindOfClass:NSArray.class] ? artistInfo[@"genres"] : @[];
         NSMutableArray *clean = [NSMutableArray array];
         for (id g in genres) if ([g isKindOfClass:NSString.class]) [clean addObject:g];
@@ -115,6 +118,9 @@ static void resolve(NSDictionary *now) {
         if (sCache.count > 200) [sCache removeObjectForKey:sCache.allKeys.firstObject];
         [sCache writeToURL:cacheURL() atomically:YES];
         MRGDJLog(@"genres: %@ → %@ (Web API artist, cached)", artist ?: key, joinGenres(clean) ?: @"none");
+        // The song may have changed while the lookup ran: the answer is kept, but only shown for its own song.
+        NSString *playing = MRGNowPlaying()[@"uri"];
+        if (now[@"uri"] && playing && ![playing isEqualToString:now[@"uri"]]) return;
         publish(joinGenres(clean));
     };
     if ([artistURI hasPrefix:@"spotify:artist:"]) MRGWebArtist(artistURI, keep);
