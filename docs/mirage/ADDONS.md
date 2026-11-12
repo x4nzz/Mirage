@@ -109,6 +109,16 @@ Every theme in that file is checked (only the known keys, colors as `#RRGGBB`, n
 doesn't pass is dropped. **Download theme list** turns the fetch off. Off, or a fetch that fails, shows the
 bundled catalog and says so.
 
+## 0.6.3: which Mirage is running
+
+- Settings → Mirage → About shows the version with its build date, the file this Mirage runs from and the
+  first part of its LC_UUID. If another copy of Mirage is loaded in the same app (an old `Mirage.dylib` or
+  `.deb` injected again by the signer, or a tweak folder), Mirage names that file and its version in a
+  one-time alert, in a red About row and in the DJ log. It also keeps its own drawer row on top and hides
+  the other copy's row, so the drawer opens the new settings.
+- `scripts/mirage-build.sh` fails unless the finished IPA has exactly one Mirage image and it is the
+  version in `mirage/VERSION`.
+
 ## 0.6.2: lyrics shelf, add-ons on the main page
 
 - **Pop-up lyrics 2.0** is a shelf at the top of Home, not an overlay. Mirage adds the card's height to
