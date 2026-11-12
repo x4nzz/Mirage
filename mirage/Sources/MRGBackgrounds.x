@@ -18,6 +18,7 @@
 #import "MRGClearing.h"
 #import "MRGDJLog.h"
 #import <objc/runtime.h>
+#import <dlfcn.h>
 
 static char kBackgroundKey, kClearedKey, kOriginalColorKey, kDarkOnlyKey;
 
@@ -290,6 +291,27 @@ static BOOL isPageSized(UIView *host) {
 }
 
 static char kScreenKey, kForcedKey;
+// 0.6.8 root cause of "the cover disappears on some songs": on a song with a Canvas, Vitrine's Animated background
+// plays the clip in its artwork field and fades Spotify's covers out (Redesigned/Player/PlayerMotion.x), and Mirage's
+// Now Playing picture sits over that field, so neither the clip nor the cover showed. While Vitrine's clip is up,
+// the picture on Now Playing steps aside (fades out) and comes back when the clip goes.
+static BOOL vitrineClipShowing(void) {
+    static BOOL (*fn)(void);
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ fn = (BOOL (*)(void))dlsym(RTLD_DEFAULT, "SGRPlayerMotionShowing"); });
+    @try { return fn ? fn() : NO; } @catch (NSException *e) { return NO; }
+}
+
+static void yieldToClip(MRGBackgroundView *bg) {
+    BOOL yield = vitrineClipShowing();
+    CGFloat want = yield ? 0 : 1;
+    if (fabs(bg.alpha - want) < 0.01) return;
+    static BOOL lastYield;
+    if (yield != lastYield) { lastYield = yield; MRGDJLog(@"background: now playing %@", yield ? @"steps aside for the song's Canvas (Vitrine's clip)" : @"back, the Canvas is gone"); }
+    if (bg.window) [UIView animateWithDuration:0.35 delay:0 options:UIViewAnimationOptionBeginFromCurrentState animations:^{ bg.alpha = want; } completion:nil];
+    else bg.alpha = want;
+}
+
 static void applyTopFade(UIView *host);
 
 // forced: a host picked by its own hook, not a page (the side drawer's panel, the Create sheet): neither
@@ -334,6 +356,8 @@ static void attachWith(UIView *host, MRGScreen screen, BOOL onTop, BOOL forced, 
         [UIView performWithoutAnimation:^{ bg.frame = host.bounds; }];
     }
     [bg pinCanvas];
+    if (screen == MRGScreenNowPlaying) yieldToClip(bg);
+    else if (bg.alpha < 1) bg.alpha = 1;
 
     if (!onTop && MRGClearPages()) {
         clearView(host);
