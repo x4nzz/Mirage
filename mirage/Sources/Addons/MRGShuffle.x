@@ -176,7 +176,7 @@ static void takeBackQueue(void) {
 - (NSString *)addonName { return @"Shuffle+"; }
 - (NSString *)addonCategory { return @"Playback"; }
 - (NSString *)addonVersion { return @"1.0"; }
-- (NSString *)addonDescription { return @"Shuffle with no artist twice in a row and recent songs held back. Pick it in Listening modes or long-press shuffle."; }
+- (NSString *)addonDescription { return @"Shuffle with no artist twice in a row; pick it in Listening modes."; }
 - (NSArray<MRGAddonSetting *> *)addonSettings {
     MRGAddonSetting *artist = [MRGAddonSetting toggle:@"artist" title:@"Separate the same artist" fallback:YES];
     MRGAddonSetting *recent = [MRGAddonSetting toggle:@"recent" title:@"Hold back recent songs" fallback:YES];

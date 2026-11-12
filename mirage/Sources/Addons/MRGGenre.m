@@ -137,7 +137,7 @@ static void resolve(NSDictionary *now) {
 - (NSString *)addonName { return @"Genres"; }
 - (NSString *)addonCategory { return @"Now Playing"; }
 - (NSString *)addonVersion { return @"1.0"; }
-- (NSString *)addonDescription { return @"Shows the genres of the song that's playing, under its title. Spotify's player metadata is used when it carries genres; otherwise the artist's genres, saved on this phone."; }
+- (NSString *)addonDescription { return @"The playing song's genres, under its title on Now Playing."; }
 - (NSArray<MRGAddonSetting *> *)addonSettings { return @[]; }
 - (void)addonDidEnable { resolve(MRGNowPlaying()); }
 - (void)addonDidDisable { publish(nil); }

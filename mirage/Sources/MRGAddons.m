@@ -53,6 +53,16 @@ static NSArray<NSDictionary *> *mergeRegistered(NSArray<NSDictionary *> *index) 
     NSMutableArray *out = [NSMutableArray arrayWithArray:index ?: @[]];
     NSMutableSet *ids = [NSMutableSet set];
     for (NSDictionary *a in out) if ([a[@"id"] isKindOfClass:NSString.class]) [ids addObject:a[@"id"]];
+    // 0.6.6: an add-on built into this Mirage describes itself (its one-line description and version), whatever an
+    // older fetched index says; the index still gives its preview art and anything else.
+    for (NSUInteger i = 0; i < out.count; i++) {
+        id<MRGAddon> addon = [out[i][@"id"] isKindOfClass:NSString.class] ? MRGAddonObject(out[i][@"id"]) : nil;
+        if (!addon) continue;
+        NSMutableDictionary *m = [out[i] mutableCopy];
+        if (addon.addonDescription.length) m[@"description"] = addon.addonDescription;
+        if (addon.addonVersion.length) m[@"version"] = addon.addonVersion;
+        out[i] = m;
+    }
     for (id<MRGAddon> addon in MRGRegisteredAddons()) {
         if ([ids containsObject:addon.addonID]) continue;
         [out addObject:@{@"id": addon.addonID, @"name": addon.addonName ?: addon.addonID,

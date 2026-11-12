@@ -572,7 +572,7 @@ void MRGPopupPlace(UIView *page) {
 - (NSString *)addonName { return @"Pop-up lyrics"; }
 - (NSString *)addonCategory { return @"Home"; }
 - (NSString *)addonVersion { return @"2.0"; }
-- (NSString *)addonDescription { return @"A synced lyrics shelf at the top of Home, Apple Music style: the current line big and bright, the next ones soft, scrolling with the song. It pushes Home down like any shelf, closes when there are no synced lyrics, and opens the player when tapped."; }
+- (NSString *)addonDescription { return @"A synced lyrics shelf at the top of Home, Apple Music style."; }
 - (NSArray<MRGAddonSetting *> *)addonSettings {
     MRGAddonSetting *size = [MRGAddonSetting slider:@"size" title:@"Text size" min:18 max:30 fallback:24];
     MRGAddonSetting *lines = [MRGAddonSetting picker:@"lines" title:@"Lines shown" options:@[@"3", @"4", @"5"] values:@[@3, @4, @5] fallback:@4];

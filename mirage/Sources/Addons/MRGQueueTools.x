@@ -203,7 +203,7 @@ static void addMenuRows(UIViewController *menu) {
 - (NSString *)addonName { return @"Queue tools"; }
 - (NSString *)addonCategory { return @"Playback"; }
 - (NSString *)addonVersion { return @"1.0"; }
-- (NSString *)addonDescription { return @"Reorder Spotify's real queue, Play next, and queue a song for after the album that's playing."; }
+- (NSString *)addonDescription { return @"Reorder the real queue, Play next, or queue after this album."; }
 - (NSArray<MRGAddonSetting *> *)addonSettings { return @[]; }
 - (UIViewController *)addonSettingsController { return [MRGQueuePage new]; }
 - (void)addonDidEnable {}

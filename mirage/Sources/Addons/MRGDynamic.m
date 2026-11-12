@@ -215,7 +215,7 @@ static NSInteger channel(NSString *key) {
 - (NSString *)addonName { return @"Dynamic colors"; }
 - (NSString *)addonCategory { return @"Look"; }
 - (NSString *)addonVersion { return @"1.0"; }
-- (NSString *)addonDescription { return @"Takes a color from the album cover and tints Mirage's accent, toggles and Vitrine's glass. A theme can say that its own accent stays."; }
+- (NSString *)addonDescription { return @"Tints Mirage's accent and Vitrine's glass from the album cover."; }
 - (NSArray<MRGAddonSetting *> *)addonSettings {
     MRGAddonSetting *strengthRow = [MRGAddonSetting slider:@"strength" title:@"Strength" min:0 max:1 fallback:0.75];
     strengthRow.footer = nil;

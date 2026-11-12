@@ -170,7 +170,7 @@ UIViewController *MRGTrashPage(void) { return [MRGTrashList new]; }
 - (NSString *)addonName { return @"Trash"; }
 - (NSString *)addonCategory { return @"Playback"; }
 - (NSString *)addonVersion { return @"1.0"; }
-- (NSString *)addonDescription { return @"Move a song to the trash from Now Playing or its menu. Trashed songs are skipped in queues, playlists and the AI DJ, and you can restore them."; }
+- (NSString *)addonDescription { return @"Trash songs from Now Playing or their menu; they're skipped everywhere."; }
 - (NSArray<MRGAddonSetting *> *)addonSettings { return @[]; }
 - (UIViewController *)addonSettingsController { return MRGTrashPage(); }
 - (void)addonDidEnable {}
