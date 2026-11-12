@@ -21,6 +21,15 @@
       "min_mirage": "0.6.0"
     },
     {
+      "id": "popup-lyrics",
+      "name": "Pop-up lyrics",
+      "description": "Apple Music-style synced lyrics at the top of Home, using Vitrine's lyrics. Home still scrolls and the DJ chip stays put.",
+      "version": "1.0",
+      "type": "Home",
+      "author": "Mirage",
+      "min_mirage": "0.6.0"
+    },
+    {
       "id": "trash",
       "name": "Trash",
       "description": "Move a song to the trash from Now Playing or its menu. Trashed songs are skipped in queues, playlists and the AI DJ. Restore them from the list.",
