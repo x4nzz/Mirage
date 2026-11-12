@@ -175,6 +175,25 @@ static NSComparisonResult cmpAdded(NSDictionary *a, NSDictionary *b) {
         else { [seen addObject:key]; if (t[@"uri"]) [seen addObject:t[@"uri"]]; [keep addObject:t]; }
     }
     if (!drop.count) { [self note:@"No duplicates" message:@"Every song in this playlist is different."]; return; }
+    // Spotify removes a track by its URI everywhere it appears, so when a copy is the very same track (not another
+    // release of the song), removing it would take the kept one too (0.6.0 did that). Then the playlist is rewritten
+    // with the kept songs in their order instead, the same way sorting works, and undo puts the old list back.
+    NSSet *kept = [NSSet setWithArray:urisOf(keep)];
+    BOOL sameURI = NO;
+    for (NSString *u in urisOf(drop)) if ([kept containsObject:u]) { sameURI = YES; break; }
+    if (sameURI) {
+        [self confirm:@"Remove duplicates?" message:[NSString stringWithFormat:@"%lu copies will be removed and the playlist rewritten in the same order. You can undo it.", (unsigned long)drop.count] go:@"Remove" run:^{
+            NSArray *original = urisOf(self.tracks);
+            [self rewrite:urisOf(keep) done:^(BOOL ok, NSString *error) {
+                if (!ok) { [self note:@"Couldn't remove them" message:error ?: @"Spotify refused."]; return; }
+                sUndo = @{@"kind": @"rewrite", @"playlist": self.playlist[@"uri"], @"uris": original};
+                self.tracks = keep;
+                self.status = [NSString stringWithFormat:@"Removed %lu", (unsigned long)drop.count];
+                [self.tableView reloadData];
+            }];
+        }];
+        return;
+    }
     [self confirm:@"Remove duplicates?" message:[NSString stringWithFormat:@"%lu copies will be removed. You can undo it.", (unsigned long)drop.count] go:@"Remove" run:^{
         MRGPlaylistRemove(self.playlist[@"uri"], urisOf(drop), ^(BOOL ok, NSString *u, NSString *error) {
             if (!ok) { [self note:@"Couldn't remove them" message:error ?: @"Spotify refused."]; return; }
