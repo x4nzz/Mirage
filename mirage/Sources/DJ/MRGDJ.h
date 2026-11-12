@@ -44,6 +44,8 @@ typedef NS_ENUM(NSInteger, MRGDJQueueState) {
 @property (nonatomic, readonly) NSInteger currentIndex;       // in `set`, -1 when the player is elsewhere
 @property (nonatomic, readonly, copy) NSString *playbackMode; // "queue" (the rest of the set is in Spotify's queue) or "step" (each next track played by Mirage)
 @property (nonatomic, readonly, getter=isSpeaking) BOOL speaking;
+// 0.6.8: what the set is right now, for the pill on Now Playing ("On repeat", "Throwbacks", "New for you", …).
+@property (nonatomic, readonly, copy) NSString *segment;
 - (void)playFromIndex:(NSInteger)index;          // jumps to a track of the set (a new context from it)
 - (void)startWithRequest:(NSString *)request;   // nil: just play something for me
 // The vibe box: a music request starts a set; a question (or chat) is answered (DJ card, spoken, and in the chat)

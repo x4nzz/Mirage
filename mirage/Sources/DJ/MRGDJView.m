@@ -1218,296 +1218,166 @@ void MRGDJFollowHeaderButtons(UIView *buttons) {
 // Now Playing while a set is on: the DJ's bar over the bottom of the artwork (under the header when the artwork isn't
 // found), a glass capsule with a DJ badge, what the DJ is doing and a Switch it up button in the accent. While the DJ
 // talks it opens up to the line, and a soft glow in the accent breathes behind it; a moment after, it closes again.
-@interface MRGDJNowBar : UIView
-@property (nonatomic, weak) UIView *header;   // the header row (⌄ title ✦ ⋯)
-- (void)placeIn:(UIView *)root;
+// 0.6.8: the DJ on Now Playing is one pill in the header's title slot (where "Playing from …" is), like Spotify's
+// own DJ, instead of a floating bar over the cover.
+// Root causes of 0.6.7's "two DJ banners" and "the banner over the header, the queue buttons and the cover": a bar was
+// made per header unit (Spotify keeps more than one HeaderElementsUnit alive, and each added its own bar to the
+// player's card), and the bar floated in the card at a spot measured from the cover and the text, which fell back to
+// "under the header" or "over the top of the cover" whenever there wasn't 48pt free (always, on a 390pt iPhone with
+// Vinyl's bigger cover). Now there is exactly one pill for the whole app, it lives in the visible header row, takes
+// the title's place (the title fades out while it shows) and is never wider than the room between the ⌄ and the ✦ ⋯
+// buttons, so nothing can overlap it.
+@interface MRGDJHeaderPill : UIControl
+@property (nonatomic, weak) UIView *titleView;   // Spotify's title in the header row, hidden while the pill shows
 - (void)refresh;
 @end
 
-// The lyrics opened over the player: a visible Lyrics view taller than half of it.
-static BOOL lyricsOpen(UIView *root) {
-    // Walked at most twice a second (it runs on the header's layout passes).
-    static CFTimeInterval at;
-    static BOOL last;
-    static __weak UIView *lastRoot;
-    CFTimeInterval now = CACurrentMediaTime();
-    if (lastRoot == root && now - at < 0.5) return last;
-    at = now;
-    lastRoot = root;
-    UIView *l = findView(root, ^BOOL(UIView *v) {
-        return classNamed(v, @"Lyrics") && v.bounds.size.height > root.bounds.size.height * 0.5 && visibleOnScreen(v);
-    });
-    last = l != nil;
-    return last;
-}
+static MRGDJHeaderPill *sg_pill;   // the only one
 
-@implementation MRGDJNowBar {
-    UIView *_glow;
+@implementation MRGDJHeaderPill {
     UIVisualEffectView *_glass;
-    UILabel *_badge, *_title, *_line;
+    UILabel *_badge, *_text;
     MRGDJEqualizer *_eq;
     UIButton *_switch;
     BOOL _talking;
-    NSString *_spoken;
     NSUInteger _token;
-    CFTimeInterval _peekUntil;   // a short look after a track change, then it gets out of the way
-    NSString *_lastSlot;
+    CGFloat _titleAlpha;
+    BOOL _hidTitle;
 }
 
 - (instancetype)initWithFrame:(CGRect)frame {
     if (!(self = [super initWithFrame:frame])) return nil;
+    self.translatesAutoresizingMaskIntoConstraints = NO;
     self.alpha = 0;
     self.hidden = YES;
-    _glow = [UIView new];
-    _glow.userInteractionEnabled = NO;
-    _glow.backgroundColor = UIColor.clearColor;
-    _glow.layer.shadowOffset = CGSizeZero;
-    _glow.layer.shadowRadius = 22;
-    _glow.layer.shadowOpacity = 0;
-    [self addSubview:_glow];
-    _glass = [[UIVisualEffectView alloc] initWithEffect:glassEffect(NO)];
+    self.accessibilityIdentifier = @"mirage.dj.pill";
+    _glass = [[UIVisualEffectView alloc] initWithEffect:glassEffect(YES)];
     _glass.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+    _glass.userInteractionEnabled = NO;
     [self addSubview:_glass];
-    _badge = makeLabel(11, UIFontWeightHeavy, MRGOnAccent(), 1);
+    _badge = makeLabel(10, UIFontWeightHeavy, MRGOnAccent(), 1);
     _badge.text = @"DJ";
     _badge.textAlignment = NSTextAlignmentCenter;
     _badge.clipsToBounds = YES;
-    _badge.layer.cornerRadius = 10;
+    _badge.layer.cornerRadius = 8;
     _eq = [MRGDJEqualizer new];
-    _title = makeLabel(14, UIFontWeightSemibold, UIColor.whiteColor, 1);
-    _line = makeLabel(14, UIFontWeightMedium, UIColor.whiteColor, 3);
-    _line.alpha = 0;
-    UIButtonConfiguration *c = [UIButtonConfiguration filledButtonConfiguration];
-    c.cornerStyle = UIButtonConfigurationCornerStyleCapsule;
-    c.image = [UIImage systemImageNamed:@"shuffle" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:12 weight:UIImageSymbolWeightBold]];
-    c.imagePadding = 5;
-    c.title = @"Switch it up";
-    c.contentInsets = NSDirectionalEdgeInsetsMake(7, 12, 7, 12);
-    c.titleTextAttributesTransformer = ^NSDictionary *(NSDictionary *a) {
-        NSMutableDictionary *m = [a mutableCopy];
-        m[NSFontAttributeName] = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
-        return m;
-    };
-    _switch = [UIButton buttonWithConfiguration:c primaryAction:nil];
+    _eq.hidden = YES;
+    _text = makeLabel(13, UIFontWeightSemibold, UIColor.whiteColor, 1);
+    _text.lineBreakMode = NSLineBreakByTruncatingTail;
+    _switch = [UIButton buttonWithType:UIButtonTypeSystem];
+    [_switch setImage:[UIImage systemImageNamed:@"shuffle" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:11 weight:UIImageSymbolWeightBold]] forState:UIControlStateNormal];
     _switch.accessibilityLabel = @"Switch it up";
+    _switch.layer.cornerRadius = 11;
+    _switch.clipsToBounds = YES;
     [_switch addTarget:self action:@selector(switchItUp) forControlEvents:UIControlEventTouchUpInside];
-    for (UIView *v in @[_badge, _eq, _title, _line, _switch]) [_glass.contentView addSubview:v];
-    UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(openSheet)];
-    [_glass addGestureRecognizer:tap];
-    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(speaking:) name:MRGDJSpeakingNotification object:nil];
-    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(refresh) name:MRGDJChangedNotification object:nil];
-    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(trackChanged) name:MRGPlayerTrackChangedNotification object:nil];
+    for (UIView *v in @[_badge, _eq, _text]) { v.userInteractionEnabled = NO; [self addSubview:v]; }
+    [self addSubview:_switch];
+    [self addTarget:self action:@selector(openSheet) forControlEvents:UIControlEventTouchUpInside];
+    self.isAccessibilityElement = NO;
+    NSNotificationCenter *nc = NSNotificationCenter.defaultCenter;
+    [nc addObserver:self selector:@selector(speaking:) name:MRGDJSpeakingNotification object:nil];
+    [nc addObserver:self selector:@selector(refresh) name:MRGDJChangedNotification object:nil];
+    [nc addObserver:self selector:@selector(refresh) name:MRGSettingsChangedNotification object:nil];
     return self;
 }
 
 - (void)dealloc { [NSNotificationCenter.defaultCenter removeObserver:self]; }
 
 - (void)openSheet { MRGShowDJ(controllerOf(self)); }
-- (void)switchItUp { [[UIImpactFeedbackGenerator new] impactOccurred]; [MRGDJ.shared switchItUp]; }
-
-// 0.5.1: the bar no longer sits on the cover all the time. It shows while the DJ talks or picks a set, and for a few
-// seconds after a track change (with Switch it up), then fades; the ✦ in the header (in the accent while the DJ is on)
-// opens the DJ sheet any time. It also stays away while the lyrics fill the player.
-- (BOOL)shouldShow {
-    if (!MRGDJShowsPlayerButton() || MRGDJ.shared.state == MRGDJIdle) return NO;
-    if (self.superview && lyricsOpen(self.superview)) return NO;
-    return _talking || MRGDJ.shared.state == MRGDJThinking || CACurrentMediaTime() < _peekUntil;
+- (void)switchItUp {
+    [[UIImpactFeedbackGenerator new] impactOccurred];
+    [MRGDJ.shared switchItUp];
 }
 
-- (void)trackChanged {
-    _peekUntil = CACurrentMediaTime() + 4;
-    [self refresh];
-    __weak typeof(self) weak = self;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [weak refresh]; });
+- (BOOL)shouldShow {
+    return MRGDJShowsPlayerButton() && MRGDJ.shared.state != MRGDJIdle && self.superview && self.titleView;
+}
+
+- (NSString *)caption {
+    MRGDJ *dj = MRGDJ.shared;
+    if (dj.state == MRGDJThinking) return dj.status.length ? dj.status : @"Picking your next set…";
+    if (_talking) return @"Talking";
+    NSString *seg = dj.segment;
+    return seg.length ? seg : @"Your DJ";
+}
+
+- (void)setTitleView:(UIView *)titleView {
+    if (_titleView == titleView) return;
+    [self setTitleHidden:NO];   // the old row's title comes back before the pill moves on
+    _titleView = titleView;
+}
+
+- (void)setTitleHidden:(BOOL)hide {
+    UIView *t = self.titleView;
+    if (!t) return;
+    if (hide && !_hidTitle) { _titleAlpha = t.alpha; _hidTitle = YES; }
+    if (!_hidTitle) return;
+    CGFloat want = hide ? 0 : (_titleAlpha > 0.01 ? _titleAlpha : 1);
+    if (fabs(t.alpha - want) > 0.01) [UIView animateWithDuration:0.25 animations:^{ t.alpha = want; }];
+    if (!hide) _hidTitle = NO;
 }
 
 - (void)refresh {
-    MRGDJ *dj = MRGDJ.shared;
     UIColor *accent = kGreen();
     _badge.backgroundColor = accent;
     _badge.textColor = MRGOnAccent();
-    UIButtonConfiguration *c = _switch.configuration;
-    c.baseBackgroundColor = accent;
-    c.baseForegroundColor = MRGOnAccent();
-    _switch.configuration = c;
-    _switch.enabled = dj.state != MRGDJThinking;
-    _glow.layer.shadowColor = accent.CGColor;
-    NSString *title;
-    if (dj.state == MRGDJThinking) title = dj.status.length ? dj.status : @"Picking your next set…";
-    else if (dj.currentIndex >= 0 && dj.currentIndex < (NSInteger)dj.set.count && dj.set[dj.currentIndex].why.length)
-        title = [NSString stringWithFormat:@"Mirage DJ · %@", dj.set[dj.currentIndex].why];
-    else title = @"Mirage DJ";
-    _title.text = title;
     _eq.hidden = !_talking;
+    _switch.backgroundColor = [accent colorWithAlphaComponent:0.9];
+    _switch.tintColor = MRGOnAccent();
+    _switch.enabled = MRGDJ.shared.state == MRGDJPlaying;
+    _switch.alpha = _switch.enabled ? 1 : 0.4;
+    _text.text = [self caption];
+    self.accessibilityLabel = [NSString stringWithFormat:@"Mirage DJ, %@", _text.text];
     BOOL show = [self shouldShow];
-    if (show == !self.hidden && self.alpha > 0.01) { [self setNeedsLayout]; return; }
+    [self setTitleHidden:show];
     if (show) {
-        self.hidden = NO;
-        [self.superview bringSubviewToFront:self];
-        [self placeIn:self.superview];
-        [UIView animateWithDuration:0.3 animations:^{ self.alpha = 1; }];
-    } else {
-        [UIView animateWithDuration:0.25 animations:^{ self.alpha = 0; } completion:^(BOOL f) { if (![self shouldShow]) self.hidden = YES; }];
+        if (self.hidden) { self.hidden = NO; [UIView animateWithDuration:0.25 animations:^{ self.alpha = 1; }]; }
+        else if (self.alpha < 1) self.alpha = 1;
+    } else if (!self.hidden) {
+        [UIView animateWithDuration:0.2 animations:^{ self.alpha = 0; } completion:^(BOOL f) { if (![self shouldShow]) self.hidden = YES; }];
     }
+    [self invalidateIntrinsicContentSize];
+    [self setNeedsLayout];
 }
 
-// The cover the player shows: the biggest square picture under the header.
-static UIView *artworkUnder(UIView *root, CGFloat belowY) {
-    __block UIView *best = nil;
-    __block CGFloat bestArea = 160 * 160;
-    forEachView(root, ^(UIView *v, BOOL *stop) {
-        if (![v isKindOfClass:UIImageView.class] || !((UIImageView *)v).image || !visibleOnScreen(v)) return;
-        CGRect f = [v convertRect:v.bounds toView:root];
-        if (fabs(f.size.width - f.size.height) > 24 || f.origin.y < belowY - 4) return;
-        if (!CGRectIntersectsRect(f, root.bounds)) return;
-        CGFloat area = f.size.width * f.size.height;
-        if (area > bestArea) { bestArea = area; best = v; }
-    });
-    return best;
-}
-
-// The top of the first visible text under the cover (the lyric preview line, the title), so the bar never sits on it.
-static CGFloat textTopBelow(UIView *root, CGFloat y, MRGDJNowBar *except) {
-    __block CGFloat top = CGRectGetMaxY(root.bounds);
-    forEachView(root, ^(UIView *v, BOOL *stop) {
-        if (v == except || [v isDescendantOfView:except]) return;
-        BOOL text = [v isKindOfClass:UILabel.class] && ((UILabel *)v).text.length;
-        BOOL lyrics = classNamed(v, @"Lyrics") && v.bounds.size.height > 20;
-        if (!text && !lyrics) return;
-        if (!visibleOnScreen(v)) return;
-        CGRect f = [v convertRect:v.bounds toView:root];
-        if (f.origin.y >= y - 2 && f.origin.y < top) top = f.origin.y;
-    });
-    return top;
-}
-
-- (void)placeIn:(UIView *)root {
-    @try {
-        UIView *header = self.header;
-        if (!header || !root) return;
-        CGRect h = [header convertRect:header.bounds toView:root];
-        UIView *art = artworkUnder(root, CGRectGetMaxY(h));
-        CGRect a = art ? [art convertRect:art.bounds toView:root] : CGRectNull;
-        CGFloat width = MIN(root.bounds.size.width - 32, 520);
-        if (art) width = MIN(width, MAX(a.size.width, 260) - 8);
-        CGFloat height = _talking ? [self talkingHeightFor:width] : 48;
-        CGFloat x = round((art ? CGRectGetMidX(a) : CGRectGetMidX(root.bounds)) - width / 2);
-        x = MAX(16, MIN(x, root.bounds.size.width - 16 - width));
-        CGFloat y;
-        NSString *slot;
-        if (!art) { y = CGRectGetMaxY(h) + 8; slot = @"under the header"; }
-        else {
-            CGFloat above = CGRectGetMinY(a) - CGRectGetMaxY(h);          // free space between the header and the cover
-            CGFloat below = textTopBelow(root, CGRectGetMaxY(a), self) - CGRectGetMaxY(a);   // between the cover and the lyric line / title
-            if (above >= height + 8) { y = CGRectGetMaxY(h) + (above - height) / 2; slot = @"between the header and the cover"; }
-            else if (below >= height + 8) { y = CGRectGetMaxY(a) + (below - height) / 2; slot = @"between the cover and the text"; }
-            else { y = CGRectGetMaxY(h) + 6; slot = @"over the top of the cover (briefly)"; }
-        }
-        CGRect frame = CGRectMake(x, round(y), width, height);
-        if (!CGRectEqualToRect(self.frame, frame)) self.frame = frame;
-        if (![slot isEqualToString:_lastSlot]) { _lastSlot = slot; MRGDJLog(@"player bar: %@ (%.0fpt tall)", slot, height); }
-    } @catch (NSException *e) {
-        MRGDJLog(@"player bar: placing threw %@", e.reason);
-    }
-}
-
-- (CGFloat)talkingHeightFor:(CGFloat)width {
-    CGFloat textWidth = width - 16 - 16;
-    CGFloat lineH = [_line sizeThatFits:CGSizeMake(textWidth, CGFLOAT_MAX)].height;
-    lineH = MIN(lineH, ceil(_line.font.lineHeight * 3) + 1);
-    return ceil(48 + lineH + 12);
+- (CGSize)intrinsicContentSize {
+    CGFloat textW = ceil([_text sizeThatFits:CGSizeMake(400, 20)].width);
+    return CGSizeMake(8 + 24 + 6 + (_eq.hidden ? 0 : 16) + textW + 8 + 22 + 4, 30);
 }
 
 - (void)layoutSubviews {
     [super layoutSubviews];
     CGRect b = self.bounds;
     _glass.frame = b;
-    shapeGlass(_glass, 24, NO);
-    _glow.frame = CGRectInset(b, 6, 6);
-    _glow.layer.shadowPath = [UIBezierPath bezierPathWithRoundedRect:_glow.bounds cornerRadius:20].CGPath;
-    [_switch sizeToFit];
-    CGSize sw = _switch.bounds.size;
-    _switch.frame = CGRectMake(b.size.width - 8 - sw.width, round((48 - sw.height) / 2), sw.width, sw.height);
-    _badge.frame = CGRectMake(12, 14, 30, 20);
-    _eq.frame = CGRectMake(CGRectGetMaxX(_badge.frame) + 8, 17, 14, 14);
-    CGFloat titleX = (_eq.hidden ? CGRectGetMaxX(_badge.frame) : CGRectGetMaxX(_eq.frame)) + 8;
-    _title.frame = CGRectMake(titleX, 14, CGRectGetMinX(_switch.frame) - 8 - titleX, 20);
-    _line.frame = CGRectMake(16, 48, b.size.width - 32, MAX(0, b.size.height - 48 - 12));
+    shapeGlass(_glass, b.size.height / 2, YES);
+    CGFloat midY = b.size.height / 2;
+    _badge.frame = CGRectMake(5, midY - 8, 24, 16);
+    CGFloat x = CGRectGetMaxX(_badge.frame) + 6;
+    if (!_eq.hidden) { _eq.frame = CGRectMake(x, midY - 6, 12, 12); x += 16; }
+    _switch.frame = CGRectMake(b.size.width - 4 - 22, midY - 11, 22, 22);
+    _text.frame = CGRectMake(x, midY - 9, MAX(0, CGRectGetMinX(_switch.frame) - 6 - x), 18);
 }
 
-- (void)breathe:(BOOL)on {
-    [_glow.layer removeAnimationForKey:@"breathe"];
-    if (!on) { _glow.layer.shadowOpacity = 0; return; }
-    _glow.layer.shadowOpacity = 0.55;
-    CABasicAnimation *a = [CABasicAnimation animationWithKeyPath:@"shadowOpacity"];
-    a.fromValue = @0.25;
-    a.toValue = @0.85;
-    a.duration = 1.1;
-    a.autoreverses = YES;
-    a.repeatCount = HUGE_VALF;
-    a.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut];
-    [_glow.layer addAnimation:a forKey:@"breathe"];
+- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
+    if (self.hidden || self.alpha < 0.05) return nil;
+    // The switch gets a bigger target than it looks.
+    if (CGRectContainsPoint(CGRectInset(_switch.frame, -10, -8), point) && _switch.enabled) return _switch;
+    return [super hitTest:point withEvent:event];
 }
 
 - (void)speaking:(NSNotification *)n {
     BOOL on = [n.userInfo[@"speaking"] boolValue];
-    NSString *line = n.userInfo[@"line"];
     NSUInteger token = ++_token;
-    if (on && line.length) {
-        _talking = YES;
-        _line.text = line;
-        [self refresh];
-        if (self.hidden || !self.superview || !visibleOnScreen(self.header)) return;
-        [self.superview bringSubviewToFront:self];
-        [self breathe:YES];
-        [UIView animateWithDuration:0.4 delay:0 usingSpringWithDamping:0.85 initialSpringVelocity:0 options:UIViewAnimationOptionBeginFromCurrentState animations:^{
-            [self placeIn:self.superview];
-            [self layoutIfNeeded];
-            self->_line.alpha = 1;
-        } completion:nil];
-        return;
-    }
-    if (on) return;
-    // A beat after the voice ends, the line folds away.
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    if (on) { _talking = YES; [self refresh]; return; }
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         if (token != self->_token) return;
         self->_talking = NO;
-        [self breathe:NO];
         [self refresh];
-        [UIView animateWithDuration:0.35 delay:0 options:UIViewAnimationOptionBeginFromCurrentState animations:^{
-            self->_line.alpha = 0;
-            [self placeIn:self.superview];
-            [self layoutIfNeeded];
-        } completion:nil];
     });
 }
-
 @end
 
-static char kPlayerButtonKey, kPlayerSpacerKey, kNowBarKey;
-
-// Now Playing's own root view under the window (the topmost ancestor that is the player's), so the bar sits over the
-// artwork and goes away with the player.
-static UIView *playerRoot(UIView *v) {
-    UIView *root = v.superview ?: v;
-    for (UIView *p = v.superview; p && p != v.window; p = p.superview) {
-        UIResponder *owner = p.nextResponder;
-        if (classNamed(p, @"NowPlaying") || ([owner isKindOfClass:UIViewController.class] && classNamed(owner, @"NowPlaying"))) root = p;
-    }
-    return root;
-}
-
-// 0.5.2: the bar goes in the player's card (the nearest ancestor about the window's size), which moves when the player
-// is pulled down; 0.5.1 put it in a container above the card, so it floated over the header while the card slid.
-static UIView *playerCard(UIView *v) {
-    CGSize win = v.window ? v.window.bounds.size : UIScreen.mainScreen.bounds.size;
-    for (UIView *p = v; p && p != v.window; p = p.superview) {
-        if ([p isKindOfClass:UIScrollView.class]) continue;
-        CGSize z = p.bounds.size;
-        if (fabs(z.width - win.width) < win.width * 0.1 && fabs(z.height - win.height) < win.height * 0.12) return p;
-    }
-    return nil;
-}
+static char kPlayerButtonKey, kPlayerSpacerKey;
 
 static UIStackView *headerRow(UIView *host) {
     return (UIStackView *)findView(host, ^BOOL(UIView *v) {
@@ -1522,11 +1392,10 @@ void MRGDJPlacePlayerButton(UIViewController *unit) {
     if (!host) return;
     MRGDJPlayerButton *button = objc_getAssociatedObject(unit, &kPlayerButtonKey);
     UIView *spacer = objc_getAssociatedObject(unit, &kPlayerSpacerKey);
-    MRGDJNowBar *bar = objc_getAssociatedObject(unit, &kNowBarKey);
     if (!MRGDJShowsPlayerButton()) {
         [button removeFromSuperview];
         [spacer removeFromSuperview];
-        [bar removeFromSuperview];
+        [sg_pill refresh];
         return;
     }
     UIStackView *row = headerRow(host);
@@ -1567,16 +1436,29 @@ void MRGDJPlacePlayerButton(UIViewController *unit) {
     [button matchGlass:moreGlass];
     button.hidden = more.hidden || more.alpha < 0.01;
 
-    UIView *root = playerCard(host) ?: playerRoot(host);
-    if (!bar) {
-        bar = [MRGDJNowBar new];
-        objc_setAssociatedObject(unit, &kNowBarKey, bar, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    // The one pill goes to the header row that is on screen (another unit's row, off screen, doesn't take it).
+    if (!visibleOnScreen(row) || row.arrangedSubviews.count < 3) return;
+    UIView *title = row.arrangedSubviews[row.arrangedSubviews.count / 2];
+    if (!sg_pill) sg_pill = [MRGDJHeaderPill new];
+    MRGDJHeaderPill *pill = sg_pill;
+    if (pill.superview != row) {
+        [pill removeFromSuperview];
+        [row addSubview:pill];
+        // Between the ⌄ on the left and the ✦ ⋯ on the right, centered on the row: 2 × (✦ + ⋯ + gaps) narrower than it.
+        NSLayoutConstraint *maxW = [pill.widthAnchor constraintLessThanOrEqualToAnchor:row.widthAnchor constant:-2 * (side + 8 + side + 10)];
+        NSLayoutConstraint *fit = [pill.widthAnchor constraintEqualToConstant:0];
+        fit.priority = UILayoutPriorityDefaultLow;   // as wide as its text, within the cap
+        [NSLayoutConstraint activateConstraints:@[
+            [pill.centerXAnchor constraintEqualToAnchor:row.centerXAnchor],
+            [pill.centerYAnchor constraintEqualToAnchor:more.centerYAnchor],
+            [pill.heightAnchor constraintEqualToConstant:30],
+            maxW,
+        ]];
+        [pill setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
+        [pill setContentCompressionResistancePriority:UILayoutPriorityDefaultHigh forAxis:UILayoutConstraintAxisHorizontal];
+        (void)fit;
     }
-    bar.header = row;
-    if (bar.superview != root) { [root addSubview:bar]; [bar refresh]; }
-    if (!bar.hidden && lyricsOpen(root)) [bar refresh];
-    if (!bar.hidden) {
-        if (root.subviews.lastObject != bar) [root bringSubviewToFront:bar];
-        [bar placeIn:root];
-    }
+    pill.titleView = title;
+    [row bringSubviewToFront:pill];
+    [pill refresh];
 }

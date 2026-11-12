@@ -257,6 +257,7 @@ static NSString *artistCandidate(NSString *request, NSInteger *mode, BOOL *plain
 @end
 
 @implementation MRGDJ {
+    NSString *_segmentName;   // the current segment's name, when the set is one
     NSMutableSet<NSString *> *_spoken;
     NSString *_origRequest;                // the listener's own last request, kept through Switch it up
     NSInteger _talkCount;                  // tracks of this set the DJ arrived at, for the talk setting
@@ -325,6 +326,15 @@ static NSString *artistCandidate(NSString *request, NSInteger *mode, BOOL *plain
         MRGDuckMusic(NO);
         [self changed];
     });
+}
+
+- (NSString *)segment {
+    if (_segmentName.length) return _segmentName;
+    if (_currentIndex >= 0 && _currentIndex < (NSInteger)_set.count && _set[_currentIndex].why.length) {
+        NSString *w = _set[_currentIndex].why;
+        return [[w substringToIndex:1].uppercaseString stringByAppendingString:[w substringFromIndex:1]];
+    }
+    return nil;
 }
 
 - (void)changed { [NSNotificationCenter.defaultCenter postNotificationName:MRGDJChangedNotification object:self]; }
