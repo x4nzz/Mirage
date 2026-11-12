@@ -100,7 +100,7 @@ NSArray<NSDictionary *> *MRGVoicePresets(void) {
               @"style": @"A soft, soothing, warm female voice: slow, gentle and intimate, close to the mic, calm and reassuring, with a hint of a smile. Never loud, never rushed.",
               @"openai": @"shimmer", @"gemini": @"Achernar", @"groq": @"diana", @"xai": @"ara",
               @"eleven": @[@"Sarah", @"Lily", @"Matilda", @"Alice", @"Jessica", @"Laura", @"Charlotte", @"Rachel"], @"gender": @"female",
-              @"stability": @0.7, @"similarity": @0.8, @"elStyle": @0.15},
+              @"stability": @0.6, @"similarity": @0.8, @"elStyle": @0.3, @"elModel": @"v3", @"elTag": @"[softly]", @"v3Stab": @0.5, @"phoneVol": @0.85},
             // Alex's pick for his first sample: ElevenLabs "Ivy" (low, soft, slow, close-mic, calm, a bit caring and bossy).
             @{@"edge": @"en-US-AvaNeural", @"edgeVol": @0.85, @"id": @"velvet", @"name": @"Soft & Close", @"blurb": @"Low, soft and slow, right at the mic; calm, caring, a little bossy (ElevenLabs Ivy).",
               @"speed": @0.84, @"pitch": @0.95, @"warmth": @1.0, @"breath": @0.6, @"pause": @0.8,
@@ -108,15 +108,16 @@ NSArray<NSDictionary *> *MRGVoicePresets(void) {
               @"openai": @"shimmer", @"gemini": @"Sulafat", @"groq": @"autumn", @"xai": @"ara",
               @"elevenID": @"KhpuFRhu6kfNvpalcYtz", @"elevenIDName": @"Ivy",
               @"phone": @[@"Ava", @"Zoe", @"Samantha"], @"gender": @"female",
-              @"stability": @0.75, @"similarity": @0.8, @"elStyle": @0.1},
+              @"stability": @0.75, @"similarity": @0.8, @"elStyle": @0.1, @"elModel": @"flash", @"phoneVol": @0.85},
             // ElevenLabs' classic "Nicole": a soft, breathy, intimate whisper.
-            @{@"edge": @"en-US-AvaMultilingualNeural", @"edgeVol": @0.7, @"edgeSpeed": @0.8, @"edgePitch": @0.94, @"id": @"whisper", @"name": @"Classic Whisper", @"blurb": @"Soft, breathy, intimate whisper (ElevenLabs Nicole).",
+            @{@"edge": @"en-US-AvaMultilingualNeural", @"edgeVol": @0.7, @"edgeSpeed": @0.8, @"edgePitch": @0.94, @"id": @"whisper", @"name": @"Classic Whisper", @"blurb": @"Soft, breathy, intimate whisper; whispers for real on ElevenLabs v3.",
               @"speed": @0.88, @"pitch": @1.05, @"warmth": @0.8, @"breath": @0.95, @"pause": @0.6,
               @"style": @"Whisper the whole time: a soft, breathy, intimate ASMR whisper, light and high, very close to the mic, calm, gentle and hushed, every word unhurried. Never use a normal speaking voice.",
               @"openai": @"shimmer", @"gemini": @"Achernar", @"groq": @"diana", @"xai": @"ara",
               @"elevenID": @"piTKgcLEGmPE4e6mEKli", @"elevenIDName": @"Nicole",
               @"phone": @[@"Zoe", @"Ava", @"Samantha"], @"gender": @"female",
-              @"stability": @0.6, @"similarity": @0.8, @"elStyle": @0.0},
+              @"stability": @0.25, @"similarity": @0.7, @"elStyle": @0.8, @"elModel": @"v3", @"elTag": @"[whispers]", @"elEvery": @YES, @"v3Stab": @0.0,
+              @"elSpeed": @0.85, @"phoneVol": @0.5},
             // Modeled on Alex's second sample (ElevenLabs "Arabella" v3 demo: young bright American female, very expressive).
             @{@"edge": @"en-US-EmmaMultilingualNeural", @"edgeVol": @1.0, @"id": @"spark", @"name": @"Playful Spark", @"blurb": @"Young, bright and super expressive; laughs, whispers, big swings.",
               @"speed": @1.06, @"pitch": @1.05, @"warmth": @0.6, @"breath": @0.25, @"pause": @0.35, @"persona": @0,
@@ -124,31 +125,31 @@ NSArray<NSDictionary *> *MRGVoicePresets(void) {
               @"openai": @"coral", @"gemini": @"Zephyr", @"groq": @"hannah", @"xai": @"eve",
               @"elevenID": @"Z3R5wn05IrDiVCyEkUrK", @"elevenIDName": @"Arabella",
               @"phone": @[@"Zoe", @"Ava", @"Nicky"], @"gender": @"female",
-              @"stability": @0.3, @"similarity": @0.75, @"elStyle": @0.55},
+              @"stability": @0.3, @"similarity": @0.75, @"elStyle": @0.65, @"elModel": @"v3", @"elTag": @"[excited]", @"v3Stab": @0.0, @"phoneVol": @1.0},
             @{@"edge": @"en-US-GuyNeural", @"id": @"hype", @"name": @"Hype Radio DJ", @"blurb": @"Loud, fast, big energy.",
               @"speed": @1.15, @"pitch": @1.05, @"warmth": @0.4, @"breath": @0.0, @"pause": @0.15, @"persona": @2,
               @"style": @"A high-energy radio DJ: punchy, excited and confident, big smile, hits the artist names hard, fast pace.",
               @"openai": @"ash", @"gemini": @"Fenrir", @"groq": @"troy", @"xai": @"rex",
               @"eleven": @[@"Liam", @"Charlie", @"Will", @"Chris", @"Josh", @"Adam"], @"gender": @"male",
-              @"stability": @0.3, @"similarity": @0.75, @"elStyle": @0.45},
+              @"stability": @0.3, @"similarity": @0.75, @"elStyle": @0.6, @"elModel": @"v3", @"elTag": @"[energetic, loud radio voice]", @"v3Stab": @0.0, @"phoneVol": @1.0},
             @{@"edge": @"en-US-ChristopherNeural", @"id": @"latenight", @"name": @"Late Night", @"blurb": @"Low, smooth and slow, like 2 a.m. radio.",
               @"speed": @0.9, @"pitch": @0.93, @"warmth": @0.85, @"breath": @0.35, @"pause": @0.5, @"persona": @1,
               @"style": @"A late-night radio host: low, smooth, velvety and relaxed, like it's 2 a.m.; slow, intimate, quiet confidence.",
               @"openai": @"onyx", @"gemini": @"Algieba", @"groq": @"daniel", @"xai": @"leo",
               @"eleven": @[@"Brian", @"Daniel", @"George", @"Bill", @"Eric"], @"gender": @"male",
-              @"stability": @0.6, @"similarity": @0.8, @"elStyle": @0.2},
+              @"stability": @0.55, @"similarity": @0.8, @"elStyle": @0.35, @"elModel": @"v3", @"elTag": @"[low, smooth late-night voice]", @"v3Stab": @0.5, @"phoneVol": @0.8},
             @{@"edge": @"en-US-BrianMultilingualNeural", @"id": @"narrator", @"name": @"Chill Narrator", @"blurb": @"Calm, clear and easygoing.",
               @"speed": @0.95, @"pitch": @1.0, @"warmth": @0.6, @"breath": @0.1, @"pause": @0.4, @"persona": @4,
               @"style": @"A calm, clear, friendly narrator: easygoing and even, like a documentary voice-over by someone who loves music.",
               @"openai": @"sage", @"gemini": @"Callirrhoe", @"groq": @"austin", @"xai": @"sal",
               @"eleven": @[@"George", @"Alice", @"Matilda", @"Brian"], @"gender": @"",
-              @"stability": @0.6, @"similarity": @0.75, @"elStyle": @0.1},
+              @"stability": @0.65, @"similarity": @0.75, @"elStyle": @0.1, @"elModel": @"v2", @"phoneVol": @0.9},
             @{@"edge": @"en-US-AndrewNeural", @"id": @"classic", @"name": @"Classic Spotify DJ", @"blurb": @"Friendly, casual, like Spotify's own DJ.",
               @"speed": @1.0, @"pitch": @1.0, @"warmth": @0.6, @"breath": @0.0, @"pause": @0.3, @"persona": @0,
               @"style": @"A friendly, casual music host like Spotify's DJ: upbeat but relaxed, warm and genuine, conversational, like a friend who knows your taste.",
               @"openai": @"ash", @"gemini": @"Puck", @"groq": @"troy", @"xai": @"eve",
               @"eleven": @[@"Chris", @"Liam", @"Brian", @"Eric"], @"gender": @"male",
-              @"stability": @0.45, @"similarity": @0.75, @"elStyle": @0.25},
+              @"stability": @0.45, @"similarity": @0.75, @"elStyle": @0.3, @"elModel": @"v2", @"phoneVol": @0.95},
         ];
     });
     return list;
@@ -178,6 +179,7 @@ NSString *MRGVoiceApplyPreset(NSString *pid) {
     MRGElevenSetStability([p[@"stability"] doubleValue]);
     MRGElevenSetSimilarity([p[@"similarity"] doubleValue]);
     [D() setDouble:[p[@"elStyle"] doubleValue] forKey:@"mirage.dj.elevenStyle"];
+    [D() setDouble:p[@"phoneVol"] ? [p[@"phoneVol"] doubleValue] : 1.0 forKey:@"mirage.dj.phoneVolume"];
     // Voice only: a preset never changes the DJ's persona or the music (0.4.2's "Soft & soothing" persona leaked into
     // the sets: "a quiet flow", "a soft pulse").
     NSMutableArray *what = [NSMutableArray array];
@@ -204,7 +206,12 @@ NSString *MRGVoiceApplyPreset(NSString *pid) {
     // 0.5.1: every preset speaks with the free voices; only the iPhone voice, if the listener picked it, stays (paid
     // engines failed for Alex: ElevenLabs' free plan refuses library voices, Qwen wants a $1 card check).
     MRGVoiceEngine current = MRGVoiceGetEngine();
-    BOOL keep = [D() boolForKey:@"mirage.dj.engineChosen"] && current == MRGVoiceEnginePhone;
+    // A preset changes how the voice sounds, not which engine speaks: ElevenLabs (with its key), the provider's voice
+    // and the iPhone voice stay when the listener picked them. Before 0.6.5 a preset switched ElevenLabs back to
+    // the free voice, so the presets seemed to do nothing with ElevenLabs.
+    BOOL keep = [D() boolForKey:@"mirage.dj.engineChosen"] &&
+                (current == MRGVoiceEnginePhone || (current == MRGVoiceEngineEleven && MRGKeychainGet(kEleven).length) ||
+                 (current == MRGVoiceEngineProvider && MRGProviderHasTTS(MRGAIProvider())));
     if (!keep) MRGVoiceSetEngine(MRGVoiceEngineFree);
     if ([p[@"elevenID"] length] && MRGKeychainGet(kEleven).length) {
         // The voice Alex picked, by its ID: never silently swapped for another. Shared-library voices that aren't in his
@@ -477,14 +484,47 @@ void MRGVoicePreparePreset(NSString *pid, void (^done)(NSString *message)) {
     });
 }
 
+// How the active preset is spoken by ElevenLabs. Each preset names a model and, for Eleven v3, an audio tag:
+//   v3    eleven_v3 with the preset's tag ([whispers] before every sentence for the whisper, once at the start for the
+//         others), v3's own stability steps (0 creative, 0.5 natural, 1 robust) and no <break/> tags (v3 doesn't
+//         take them; ellipses instead). Falls back to v2 if the plan or voice refuses v3.
+//   v2    eleven_multilingual_v2 with the preset's stability / similarity / style exaggeration / speed.
+//   flash eleven_flash_v2_5 first (the fast model the Soft & Close preset was tuned on), then v2.
+// Hand-tuned settings (no preset) speak with v2, which follows the style slider. Before 0.6.5 everything went to
+// eleven_flash_v2_5 first with style 0 on the whisper, and the preset's style text never reached ElevenLabs.
+static NSArray<NSString *> *sentences(NSString *text);
+static NSDictionary *activePreset(void) {
+    NSString *pid = MRGVoicePresetID();
+    for (NSDictionary *x in MRGVoicePresets()) if ([x[@"id"] isEqualToString:pid]) return x;
+    return nil;
+}
+
+static BOOL sNoV3;   // this key's plan or voice refused eleven_v3 once: skip it for the rest of the session
+
+static NSString *v3Text(NSString *text, NSDictionary *p) {
+    NSString *plain = [text stringByReplacingOccurrencesOfString:@"<break[^>]*/>" withString:@"..." options:NSRegularExpressionSearch range:NSMakeRange(0, text.length)];
+    NSString *tag = [p[@"elTag"] isKindOfClass:NSString.class] ? p[@"elTag"] : nil;
+    if (!tag.length) return plain;
+    if (![p[@"elEvery"] boolValue]) return [NSString stringWithFormat:@"%@ %@", tag, plain];
+    NSMutableArray *out = [NSMutableArray array];
+    for (NSString *one in sentences(plain)) [out addObject:[NSString stringWithFormat:@"%@ %@", tag, one]];
+    return [out componentsJoinedByString:@" "];
+}
+
 static void elevenSpeech(NSString *text, NSString *voice, double speed, void (^done)(NSData *, NSString *)) {
     NSString *key = MRGKeychainGet(kEleven);
     if (!key.length || !voice.length) { done(nil, @"No ElevenLabs key or voice."); return; }
     NSString *path = [NSString stringWithFormat:@"/v1/text-to-speech/%@?output_format=mp3_44100_128", voice];
-    void (^run)(NSString *, void (^)(NSData *, NSInteger, NSString *)) = ^(NSString *model, void (^cb)(NSData *, NSInteger, NSString *)) {
-        NSDictionary *body = @{@"text": text, @"model_id": model,
-                               @"voice_settings": @{@"speed": @(MIN(1.2, MAX(0.7, speed))), @"stability": @(MRGElevenStability()),
-                                                    @"similarity_boost": @(MRGElevenSimilarity()), @"style": @(elevenStyle()), @"use_speaker_boost": @YES}};
+    NSDictionary *preset = activePreset();
+    NSString *kind = [preset[@"elModel"] isKindOfClass:NSString.class] ? preset[@"elModel"] : @"v2";
+    double talk = preset[@"elSpeed"] ? MIN(speed, [preset[@"elSpeed"] doubleValue]) : speed;
+    NSDictionary *v2Settings = @{@"speed": @(MIN(1.2, MAX(0.7, talk))), @"stability": @(MRGElevenStability()),
+                                 @"similarity_boost": @(MRGElevenSimilarity()), @"style": @(elevenStyle()), @"use_speaker_boost": @YES};
+    // One attempt: model, text and settings.
+    void (^run)(NSString *, NSString *, NSDictionary *, void (^)(NSData *, NSInteger, NSString *)) = ^(NSString *model, NSString *said, NSDictionary *settings, void (^cb)(NSData *, NSInteger, NSString *)) {
+        NSDictionary *body = @{@"text": said, @"model_id": model, @"voice_settings": settings};
+        MRGDJLog(@"voice: ElevenLabs %@ · stability %.2f · style %.2f · speed %.2f%@", model, [settings[@"stability"] doubleValue], [settings[@"style"] doubleValue],
+                 [settings[@"speed"] doubleValue], [model isEqualToString:@"eleven_v3"] && preset[@"elTag"] ? [@" · " stringByAppendingString:preset[@"elTag"]] : @"");
         [[NSURLSession.sharedSession dataTaskWithRequest:elevenRequest(path, key, body) completionHandler:^(NSData *data, NSURLResponse *resp, NSError *error) {
             NSInteger status = [resp isKindOfClass:NSHTTPURLResponse.class] ? ((NSHTTPURLResponse *)resp).statusCode : 0;
             NSString *err = (error || status < 200 || status >= 300) ? elevenError(status, data, error) : nil;
@@ -505,10 +545,34 @@ static void elevenSpeech(NSString *text, NSString *voice, double speed, void (^d
         }
         done(d, e);
     };
-    run(@"eleven_flash_v2_5", ^(NSData *d, NSInteger s, NSString *e) {
-        if (d || (s != 400 && s != 422)) { finish(d, s, e); return; }
-        run(@"eleven_multilingual_v2", ^(NSData *d2, NSInteger s2, NSString *e2) { finish(d2, s2, e2); });
-    });
+    // A model the plan, the voice or the settings don't take answers 400/403/422: the next model in line gets it.
+    BOOL (^refused)(NSInteger) = ^BOOL(NSInteger st) { return st == 400 || st == 403 || st == 422; };
+    void (^v2)(void) = ^{
+        run(@"eleven_multilingual_v2", text, v2Settings, ^(NSData *d, NSInteger st, NSString *e) {
+            if (d || !refused(st)) { finish(d, st, e); return; }
+            run(@"eleven_flash_v2_5", text, v2Settings, ^(NSData *d2, NSInteger s2, NSString *e2) { finish(d2, s2, e2); });
+        });
+    };
+    if ([kind isEqualToString:@"v3"] && preset && !sNoV3) {
+        double stab = [preset[@"v3Stab"] doubleValue];
+        NSDictionary *v3Settings = @{@"stability": @(stab < 0.25 ? 0.0 : stab < 0.75 ? 0.5 : 1.0), @"similarity_boost": @(MRGElevenSimilarity()),
+                                     @"style": @(elevenStyle()), @"use_speaker_boost": @YES, @"speed": @(MIN(1.2, MAX(0.7, talk)))};
+        run(@"eleven_v3", v3Text(text, preset), v3Settings, ^(NSData *d, NSInteger st, NSString *e) {
+            if (d || !refused(st)) { finish(d, st, e); return; }
+            sNoV3 = YES;
+            MRGDJLog(@"voice: eleven_v3 refused (HTTP %ld), using eleven_multilingual_v2 for this session", (long)st);
+            v2();
+        });
+        return;
+    }
+    if ([kind isEqualToString:@"flash"]) {
+        run(@"eleven_flash_v2_5", text, v2Settings, ^(NSData *d, NSInteger st, NSString *e) {
+            if (d || !refused(st)) { finish(d, st, e); return; }
+            run(@"eleven_multilingual_v2", text, v2Settings, ^(NSData *d2, NSInteger s2, NSString *e2) { finish(d2, s2, e2); });
+        });
+        return;
+    }
+    v2();
 }
 
 static NSString *engineSummary(void);
@@ -718,7 +782,7 @@ static NSString *withPauses(NSString *text, NSString *mark) {
         u.voice = voice;
         u.rate = MIN(AVSpeechUtteranceMaximumSpeechRate, MAX(AVSpeechUtteranceMinimumSpeechRate, rate));
         u.pitchMultiplier = (float)MRGVoicePitch();
-        u.volume = 1.0f;
+        u.volume = (float)num(@"mirage.dj.phoneVolume", 1.0, 0.3, 1.0);
         u.preUtteranceDelay = i == 0 ? 0.05 : 0;
         if (i + 1 < parts.count) u.postUtteranceDelay = pause;
         [batch addObject:u];

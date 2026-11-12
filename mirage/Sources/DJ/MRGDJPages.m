@@ -221,7 +221,17 @@ static NSArray<NSDictionary *> *listVoices(MRGVoiceEngine e) { return e == MRGVo
         c.detailTextLabel.text = p[@"blurb"];
         c.detailTextLabel.textColor = UIColor.grayColor;
         c.tintColor = MRGAccent();
-        c.accessoryType = [MRGVoicePresetID() isEqualToString:p[@"id"]] ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone;
+        // Each preset has its own Preview button: it picks the preset and plays a sample line with it.
+        BOOL on = [MRGVoicePresetID() isEqualToString:p[@"id"]];
+        if (on) c.textLabel.text = [@"✓ " stringByAppendingString:p[@"name"] ?: @""];
+        UIButton *play = [UIButton buttonWithType:UIButtonTypeSystem];
+        [play setImage:[UIImage systemImageNamed:@"play.circle.fill" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:24]] forState:UIControlStateNormal];
+        play.tintColor = on ? MRGAccent() : UIColor.lightGrayColor;
+        play.frame = CGRectMake(0, 0, 44, 44);
+        play.tag = ip.row;
+        play.accessibilityLabel = [@"Preview " stringByAppendingString:p[@"name"] ?: @"preset"];
+        [play addTarget:self action:@selector(previewPreset:) forControlEvents:UIControlEventTouchUpInside];
+        c.accessoryView = play;
         return c;
     }
     if (ip.section == 1) {
@@ -310,6 +320,11 @@ static NSArray<NSDictionary *> *listVoices(MRGVoiceEngine e) { return e == MRGVo
     UITableViewCell *c = [self cell:v[@"name"] detail:v[@"category"] symbol:nil];
     c.accessoryType = [MRGElevenVoice() isEqualToString:v[@"id"]] ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone;
     return c;
+}
+
+- (void)previewPreset:(UIButton *)sender {
+    if (sender.tag < 0 || sender.tag >= (NSInteger)MRGVoicePresets().count) return;
+    [self tableView:self.tableView didSelectRowAtIndexPath:[NSIndexPath indexPathForRow:sender.tag inSection:0]];
 }
 
 - (void)preview:(NSInteger)engine voice:(NSString *)voice {
