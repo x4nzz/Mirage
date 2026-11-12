@@ -109,6 +109,31 @@ Every theme in that file is checked (only the known keys, colors as `#RRGGBB`, n
 doesn't pass is dropped. **Download theme list** turns the fetch off. Off, or a fetch that fails, shows the
 bundled catalog and says so.
 
+## 0.6.1: the shop and what changed per add-on
+
+**The shop.** Each card shows its own preview, drawn on the phone in the accent color (`MRGAddonArt.m`; no
+download, the index's `preview` URL is only used for an add-on this build doesn't draw). A card has one control,
+a switch; the label next to it reads the stored state (**On** / **Off**) and an **ON** badge sits on the picture
+while it's on. There is no separate Get button any more. The Settings row appears under a card only while that
+add-on is on. Switching takes effect immediately (the enable/disable hook runs) and is saved.
+
+**Settings save themselves.** Every write goes through to disk as it's made, and the Mirage settings (never API
+keys, listening history, or per-launch flags like `.launching`) are also copied to
+`Documents/Mirage/settings-autosave.plist` after each change and whenever Spotify leaves the screen. If Spotify's
+defaults come back empty, that copy is restored at launch before any add-on starts. Save & load stays for files
+and presets; loading one now also starts or stops the add-ons it changes.
+
+| Add-on | 0.6.1 fix |
+|---|---|
+| all | Leaving Spotify within 12 s of launch no longer counts as a launch crash (it used to turn every add-on off at the next launch). |
+| `trash` | The Now Playing button sat on top of Spotify's ⌄ minimize button; it's now beside it. Shows/hides on the switch. A track trashed from another song's menu gets its own name. |
+| `shuffle-plus` | Also triggered by the player state's shuffle flag, so Spotify's own shuffle button works; turning shuffle or Shuffle+ off clears the queue it filled. |
+| `popup-lyrics` | Appears and disappears on Home right away; its timer follows Low Power Mode live; lyrics requested once per song. |
+| `playlist-tools` | Removing an exact duplicate (same URI) removed the original too; such playlists are rewritten in order instead. |
+| `genres` | A failed lookup isn't cached as "no genres"; a late answer isn't shown on the next song. |
+| `vinyl` | Holds still in Low Power Mode. |
+| `dynamic-colors` | No change; it now starts right away when a preset turns it on. |
+
 ## Shipped in 0.6.0
 
 | Id | What |
