@@ -7,6 +7,7 @@
 #import "MRGPlaylists.h"
 #import "MRGDJLog.h"
 #import "MRGPrefs.h"
+#import "MRGDiagnostics.h"
 #import <QuartzCore/QuartzCore.h>
 
 static NSString *const kAddon = @"shuffle-plus";
@@ -29,40 +30,53 @@ static void remember(NSString *uri) {
     [NSUserDefaults.standardUserDefaults setObject:sRecent forKey:@"mirage.addon.shuffle-plus.recent"];
 }
 
-static NSMutableArray *spaced(NSMutableArray *pool);
+// At most this many songs go into the queue, so only that many are ever ordered.
+static const NSUInteger kQueueMax = 200;
 
-static NSArray<NSDictionary *> *orderTracks(NSArray<NSDictionary *> *tracks, NSString *current) {
+static NSMutableArray *spaced(NSMutableArray *pool, BOOL separate, NSUInteger limit);
+
+// Pure work on plain arrays (no defaults, no UIKit): runs on a utility queue. Before 0.6.4 this ran on the main
+// thread over the whole playlist with an O(n²) artist search that lowercased the artist on every comparison; a
+// long playlist dominated by one artist froze Spotify for seconds right as shuffle was turned on.
+static NSArray<NSDictionary *> *orderTracks(NSArray<NSDictionary *> *tracks, NSString *current, NSArray<NSString *> *slice, BOOL separate) {
     NSMutableArray *fresh = [NSMutableArray array], *held = [NSMutableArray array];
-    NSArray *slice = @[];
-    if (holdRecent() && sRecent.count) slice = [sRecent subarrayWithRange:NSMakeRange(0, MIN(sRecent.count, (NSUInteger)recentWindow()))];
-    NSSet *recent = [NSSet setWithArray:slice];
+    NSSet *recent = [NSSet setWithArray:slice ?: @[]];
     for (NSDictionary *t in tracks) {
-        if (![t[@"uri"] isKindOfClass:NSString.class] || [t[@"uri"] isEqualToString:current]) continue;
+        if (![t isKindOfClass:NSDictionary.class] || ![t[@"uri"] isKindOfClass:NSString.class] || [t[@"uri"] isEqualToString:current ?: @""]) continue;
         if ([recent containsObject:t[@"uri"]]) [held addObject:t];
         else [fresh addObject:t];
     }
-    NSMutableArray *out = spaced(fresh);
-    [out addObjectsFromArray:spaced(held)];
+    NSMutableArray *out = spaced(fresh, separate, kQueueMax);
+    if (out.count < kQueueMax) [out addObjectsFromArray:spaced(held, separate, kQueueMax - out.count)];
     return out;
 }
 
-static NSMutableArray *spaced(NSMutableArray *pool) {
+static NSString *artistKey(NSDictionary *t) {
+    id a = t[@"artist"];
+    return [a isKindOfClass:NSString.class] ? [(NSString *)a lowercaseString] : @"";
+}
+
+// Shuffles, then (when separating) takes songs in order, skipping ahead at most 64 places to find a different
+// artist. Stops after `limit` songs.
+static NSMutableArray *spaced(NSMutableArray *pool, BOOL separate, NSUInteger limit) {
     for (NSUInteger i = pool.count; i > 1; i--) [pool exchangeObjectAtIndex:i - 1 withObjectAtIndex:arc4random_uniform((uint32_t)i)];
-    if (!avoidArtist()) return pool;
-    NSMutableArray *out = [NSMutableArray array];
+    if (!separate) return [[pool subarrayWithRange:NSMakeRange(0, MIN(limit, pool.count))] mutableCopy];
+    // Only the part that can end up in the queue (plus look-ahead room) is considered.
+    if (pool.count > limit + 64) [pool removeObjectsInRange:NSMakeRange(limit + 64, pool.count - limit - 64)];
+    NSMutableArray<NSString *> *keys = [NSMutableArray arrayWithCapacity:pool.count];
+    for (NSDictionary *t in pool) [keys addObject:artistKey(t)];
+    NSMutableArray *out = [NSMutableArray arrayWithCapacity:MIN(limit, pool.count)];
     NSString *last = nil;
-    while (pool.count) {
+    while (pool.count && out.count < limit) {
         NSUInteger pick = 0;
-        for (NSUInteger i = 0; i < pool.count; i++) {
-            NSString *artist = [pool[i][@"artist"] isKindOfClass:NSString.class] ? [pool[i][@"artist"] lowercaseString] : @"";
-            if (last.length && [artist isEqualToString:last]) continue;
-            pick = i;
-            break;
+        if (last.length) {
+            NSUInteger end = MIN(pool.count, (NSUInteger)64);
+            for (NSUInteger i = 0; i < end; i++) if (![keys[i] isEqualToString:last]) { pick = i; break; }
         }
-        NSDictionary *t = pool[pick];
-        [out addObject:t];
-        last = [t[@"artist"] isKindOfClass:NSString.class] ? [t[@"artist"] lowercaseString] : @"";
+        [out addObject:pool[pick]];
+        last = keys[pick];
         [pool removeObjectAtIndex:pick];
+        [keys removeObjectAtIndex:pick];
     }
     return out;
 }
@@ -111,15 +125,26 @@ static void applyShuffle(NSString *context) {
         if (!MRGAddonInstalled(kAddon)) return;
         if (![context isEqualToString:MRGPlayerContextURI() ?: @""]) return;
         if (!tracks.count) { MRGDJLog(@"shuffle+: couldn't read %@: %@", context, error ?: @"no tracks"); return; }
-        NSDictionary *now = MRGNowPlaying();
-        NSArray *ordered = orderTracks(tracks, now[@"uri"]);
-        if (ordered.count > 200) ordered = [ordered subarrayWithRange:NSMakeRange(0, 200)];
-        NSMutableArray *uris = [NSMutableArray array];
-        for (NSDictionary *t in ordered) if (t[@"uri"]) [uris addObject:t[@"uri"]];
-        MRGClearQueue(^(NSUInteger removed, NSString *clearError) {
-            MRGQueueTracks(uris, ^(BOOL ok, NSString *queueError) {
-                sQueuedFor = ok ? [context copy] : nil;
-                MRGDJLog(@"shuffle+: %@ %lu tracks%@", context, (unsigned long)uris.count, ok ? @"" : [NSString stringWithFormat:@" — queue refused (%@). Spotify's own shuffle stays. Free accounts often can't queue.", queueError ?: clearError ?: @"?"]);
+        NSString *current = MRGNowPlaying()[@"uri"];
+        NSArray *slice = @[];
+        if (holdRecent() && sRecent.count) slice = [sRecent subarrayWithRange:NSMakeRange(0, MIN(sRecent.count, (NSUInteger)recentWindow()))];
+        BOOL separate = avoidArtist();
+        MRGCrumb(@"shuffle+ ordering %lu songs of %@", (unsigned long)tracks.count, context);
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+            NSArray *ordered = @[];
+            @try { ordered = orderTracks(tracks, current, slice, separate); } @catch (NSException *e) {}
+            NSMutableArray *uris = [NSMutableArray array];
+            for (NSDictionary *t in ordered) if ([t[@"uri"] isKindOfClass:NSString.class]) [uris addObject:t[@"uri"]];
+            dispatch_async(dispatch_get_main_queue(), ^{
+                // Shuffle turned off, the add-on off or another playlist started while ordering: drop it.
+                if (!uris.count || !MRGAddonInstalled(kAddon) || ![context isEqualToString:MRGPlayerContextURI() ?: @""]) return;
+                MRGClearQueue(^(NSUInteger removed, NSString *clearError) {
+                    MRGQueueTracks(uris, ^(BOOL ok, NSString *queueError) {
+                        sQueuedFor = ok ? [context copy] : nil;
+                        MRGCrumb(@"shuffle+ queued %lu (%@)", (unsigned long)uris.count, ok ? @"ok" : @"refused");
+                        MRGDJLog(@"shuffle+: %@ %lu tracks%@", context, (unsigned long)uris.count, ok ? @"" : [NSString stringWithFormat:@" — queue refused (%@). Spotify's own shuffle stays. Free accounts often can't queue.", queueError ?: clearError ?: @"?"]);
+                    });
+                });
             });
         });
     };
