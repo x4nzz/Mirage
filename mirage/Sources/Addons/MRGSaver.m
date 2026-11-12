@@ -27,6 +27,7 @@ static BOOL settingsKey(NSString *key) {
     // Per-launch bookkeeping, not settings: a restored "launching" flag would turn that add-on off as if it crashed.
     if ([key hasSuffix:@".launching"] || [key hasSuffix:@".notice"] || [key hasSuffix:@".recent"]) return NO;
     if ([key isEqualToString:@"mirage.saver.present"] || [key hasPrefix:@"mirage.safemode."]) return NO;
+    if ([key hasPrefix:@"mirage.compat."]) return NO;   // per install: whether fragile hooks run on an unverified Spotify
     if ([key hasPrefix:@"mirage.saver.keychain"]) return NO;   // the backup's own bookkeeping
     return YES;
 }

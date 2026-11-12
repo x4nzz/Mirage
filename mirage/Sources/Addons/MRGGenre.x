@@ -1,4 +1,5 @@
 #import "MRGAddons.h"
+#import "MRGCompat.h"
 #import "MRGPlayer.h"
 #import "MRGDJLog.h"
 #import <objc/runtime.h>
@@ -74,5 +75,5 @@ static void place(UIView *root) {
 %end
 
 %ctor {
-    if (NSClassFromString(@"_TtC21NowPlaying_ScrollImpl27NPVBackgroundViewController")) %init(MRGGenreNowPlaying);
+    if (NSClassFromString(@"_TtC21NowPlaying_ScrollImpl27NPVBackgroundViewController") && MRGFragileHooksAllowed(@"Genres")) %init(MRGGenreNowPlaying);
 }

@@ -26,6 +26,7 @@
 // cover is as big as the row allows; it is never taller than Spotify's own art (no overlap with the title or lyrics
 // below), stays square, and the record stays centered on it vertically and scales with it.
 #import <UIKit/UIKit.h>
+#import "MRGCompat.h"
 #import <objc/runtime.h>
 #import <QuartzCore/QuartzCore.h>
 #import "MRGAddons.h"
@@ -602,7 +603,7 @@ static void relayAll(void) {
 
 %ctor {
     MRGAddonRegister([MRGVinylAddon new]);
-    if (cellClass() && tiltClass()) {
+    if (cellClass() && tiltClass() && MRGFragileHooksAllowed(@"Vinyl")) {
         %init(MRGVinylHooks);
         [NSNotificationCenter.defaultCenter addObserverForName:MRGSettingsChangedNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
             static NSString *last;

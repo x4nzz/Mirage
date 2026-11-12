@@ -2,6 +2,7 @@
 // artist doesn't play twice in a row and tracks from the last little while wait their turn. Spotify's own
 // queue is what actually plays. On Spotify Free the queue is often refused; then Spotify's shuffle is left as it is.
 #import "Addons/MRGAddon.h"
+#import "MRGCompat.h"
 #import "MRGAddons.h"
 #import "MRGPlayer.h"
 #import "MRGPlaylists.h"
@@ -372,7 +373,7 @@ static void rearm(void) {
 %ctor {
     MRGAddonRegister([MRGShuffleAddon new]);
     if (NSClassFromString(@"SPTEsperantoPlayer")) %init;
-    %init(MRGShuffleButton);
+    if (MRGFragileHooksAllowed(@"Shuffle+ button")) %init(MRGShuffleButton);
     dispatch_async(dispatch_get_main_queue(), ^{ rearm(); });
     NSNotificationCenter *nc = NSNotificationCenter.defaultCenter;
     [nc addObserverForName:MRGSettingsChangedNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) { rearm(); }];

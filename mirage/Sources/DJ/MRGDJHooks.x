@@ -7,6 +7,7 @@
 //  - Now Playing: a DJ button in the header row (NowPlaying_ModesImpl.HeaderElementsUnit) and the caption under it.
 // The settings switches re-run the placement on the views last seen.
 #import "MRGDJView.h"
+#import "MRGCompat.h"
 #import "MRGPrefs.h"
 #import "MRGHistory.h"
 
@@ -68,7 +69,7 @@ static void remember(NSHashTable *__strong *table, id obj) {
     if (NSClassFromString(@"_TtC19Home_FunkisPageImpl20FunkisViewController")) %init(MRGDJHome);
     if (NSClassFromString(@"_TtC14Home_PillUIKit14PillScrollView")) %init(MRGDJPills);
     if (NSClassFromString(@"SGRHomePillButtons")) %init(MRGDJRedesignPill);
-    if (NSClassFromString(@"_TtC20NowPlaying_ModesImpl18HeaderElementsUnit")) %init(MRGDJPlayer);
+    if (NSClassFromString(@"_TtC20NowPlaying_ModesImpl18HeaderElementsUnit") && MRGFragileHooksAllowed(@"DJ player button")) %init(MRGDJPlayer);
     [NSNotificationCenter.defaultCenter addObserverForName:MRGSettingsChangedNotification object:nil queue:NSOperationQueue.mainQueue
                                                 usingBlock:^(NSNotification *n) {
         for (UIView *p in sPills.allObjects) MRGDJPlaceChipInPills(p);

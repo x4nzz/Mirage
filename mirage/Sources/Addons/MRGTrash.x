@@ -1,5 +1,6 @@
 // Trash actions: a button on Now Playing, and a row in Spotify's track menu when the menu is about a track.
 #import "Addons/MRGTrash.h"
+#import "MRGCompat.h"
 #import "MRGAddons.h"
 #import "MRGPlayer.h"
 #import "MRGDJLog.h"
@@ -182,12 +183,12 @@ static void addMenuRow(UIViewController *menu) {
 %end
 
 %ctor {
-    if (NSClassFromString(@"_TtC20NowPlaying_ModesImpl18HeaderElementsUnit")) {
+    if (NSClassFromString(@"_TtC20NowPlaying_ModesImpl18HeaderElementsUnit") && MRGFragileHooksAllowed(@"Trash button")) {
         %init(MRGTrashPlayer);
         // Turning Trash on or off shows or hides the button now, not on the next layout.
         [NSNotificationCenter.defaultCenter addObserverForName:MRGSettingsChangedNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
             @try { for (UIView *v in sHosts.allObjects) placeButton(v); } @catch (NSException *e) {}
         }];
     }
-    if (NSClassFromString(@"_TtC24ContextMenu_InternalImpl25ContextMenuViewController")) %init(MRGTrashMenu);
+    if (NSClassFromString(@"_TtC24ContextMenu_InternalImpl25ContextMenuViewController") && MRGFragileHooksAllowed(@"Trash menu row")) %init(MRGTrashMenu);
 }

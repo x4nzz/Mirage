@@ -16,6 +16,7 @@
 #import "Addons/MRGAddonArt.h"
 #import "MRGIntegrity.h"
 #import "MRGDiagnostics.h"
+#import "MRGCompat.h"
 #import <PhotosUI/PhotosUI.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <objc/runtime.h>
@@ -29,7 +30,8 @@ typedef NS_ENUM(NSInteger, MRGSection) { MRGSecAddons, MRGSecBackgrounds, MRGSec
 
 // About's rows, in order; the duplicate and safe-mode rows only when there is something to say.
 static NSArray<NSString *> *aboutRows(void) {
-    NSMutableArray *r = [@[@"version", @"image", @"vitrine"] mutableCopy];
+    NSMutableArray *r = [@[@"version", @"image", @"vitrine", @"spotify"] mutableCopy];
+    if (!MRGSpotifyVerified()) [r addObject:@"compat"];
     if (MRGDuplicateSummary()) [r addObject:@"dup"];
     if (MRGSafeModeActive() || MRGSafeModeNote()) [r addObject:@"safe"];
     [r addObjectsFromArray:@[@"backup", @"restore", @"share"]];
@@ -773,6 +775,7 @@ static NSString *ip3(NSInteger row) { return row == 3 ? @"Voice" : row == 4 ? @"
         case MRGSecAbout: {
             NSArray *rows = aboutRows();
             NSString *row = ip.row < (NSInteger)rows.count ? rows[ip.row] : @"";
+            if ([row isEqualToString:@"compat"]) return [self switchCell:@"Run on this Spotify anyway" on:MRGCompatOverride() tag:24 symbol:@"exclamationmark.shield"];
             if ([row isEqualToString:@"restore"]) return [self actionCell:@"Restore from backup" symbol:@"clock.arrow.circlepath" destructive:NO enabled:YES];
             if ([row isEqualToString:@"share"]) {
                 UITableViewCell *c = [self actionCell:@"Share diagnostics" symbol:@"stethoscope" destructive:NO enabled:YES];
@@ -787,6 +790,11 @@ static NSString *ip3(NSInteger row) { return row == 3 ? @"Voice" : row == 4 ? @"
             c.detailTextLabel.textColor = UIColor.grayColor;
             if ([row isEqualToString:@"version"]) { c.textLabel.text = @"Version"; c.detailTextLabel.text = MRGVersionLine(); }
             else if ([row isEqualToString:@"image"]) { c.textLabel.text = @"Running from"; c.detailTextLabel.text = [NSString stringWithFormat:@"%@ · %@", MRGImagePath().lastPathComponent, uuid.length >= 8 ? [uuid substringToIndex:8] : @"?"]; }
+            else if ([row isEqualToString:@"spotify"]) {
+                c.textLabel.text = @"Spotify";
+                c.detailTextLabel.text = MRGCompatSummary();
+                if (!MRGSpotifyVerified() && !MRGCompatOverride()) c.detailTextLabel.textColor = UIColor.systemOrangeColor;
+            }
             else if ([row isEqualToString:@"backup"]) { c.textLabel.text = @"Settings backup"; c.detailTextLabel.text = MRGSettingsBackupSummary(); }
             else if ([row isEqualToString:@"vitrine"]) { c.textLabel.text = @"Vitrine"; c.detailTextLabel.text = NSClassFromString(@"SGModSettingsRow") ? @"Loaded" : @"Not loaded"; }
             else if ([row isEqualToString:@"dup"]) {
@@ -958,6 +966,13 @@ static NSString *ip3(NSInteger row) { return row == 3 ? @"Voice" : row == 4 ? @"
     else if (sw.tag == 21) MRGDJSetShowsPill(sw.on);
     else if (sw.tag == 22) MRGDJSetShowsPlayerButton(sw.on);
     else if (sw.tag == 23) MRGDJSetMirrorsUser(sw.on);
+    else if (sw.tag == 24) {
+        MRGCompatSetOverride(sw.on);
+        MRGPostChange();
+        UIAlertController *a = [UIAlertController alertControllerWithTitle:@"Restart Spotify" message:@"Takes effect next launch." preferredStyle:UIAlertControllerStyleAlert];
+        [a addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleCancel handler:nil]];
+        [self presentViewController:a animated:YES completion:nil];
+    }
     else if (sw.tag >= 100) {
         MRGScreen bit = 1 << (sw.tag - 100);
         MRGSetScreens(sw.on ? (MRGScreens() | bit) : (MRGScreens() & ~bit));
