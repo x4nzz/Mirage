@@ -2,7 +2,7 @@
 
 | Spotify | Status | Notes |
 |---|---|---|
-| 9.1.90 (919002269) | **Verified**: every Mirage feature and add-on was built against it | Mirage 0.6.6 builds use this IPA |
+| 9.1.90 (919002269) | **Verified**: every Mirage feature and add-on was built against it | Mirage 0.6.6 and 0.6.7 builds use this IPA |
 | anything else | Not verified | Mirage's fragile hooks are switched off (see below); the rest runs |
 
 Mirage reads the running Spotify's `CFBundleShortVersionString` at launch (`mirage/Sources/MRGCompat.m`,

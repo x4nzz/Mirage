@@ -109,6 +109,52 @@ Every theme in that file is checked (only the known keys, colors as `#RRGGBB`, n
 doesn't pass is dropped. **Download theme list** turns the fetch off. Off, or a fetch that fails, shows the
 bundled catalog and says so.
 
+## 0.6.7: a DJ that keeps your song, voice requests, working options, battery lines
+
+- **AI DJ, Start.** The song you're on keeps playing. The set is queued after it and the intro is spoken over it. The
+  picks come from that song's artist, the artists you've played most lately, Spotify's related artists, and the seeds'
+  genres. Only a named song, playlist or album, or "now" / "skip" in a request, plays right away.
+- **Talk to the DJ.** Hold the mic next to the vibe box to talk. Speech is turned into text on the phone when it can
+  be. Your words appear in a box and are sent after 3 s; tap the box to edit them first. "More chill", "more Nettspend"
+  or "switch it up" make new picks after the song on. The DJ answers with a short line that only says what it's doing.
+- **Battery.** Every shop card and add-on page has one line saying what the add-on costs, judged by what it runs.
+  Higher: Vinyl, Pop-up lyrics, Lyrics backdrop. Some: Radio. Low: the rest.
+- **Shop art.** Every add-on has its own cover and icon. The 0.6.6 ones showed the puzzle piece.
+- **Vinyl.** Record color, sleeve and BPM now apply. New options: **Record showing** (Less / Normal / More),
+  **Label** (Album art / Plain) and **Light on the record**.
+- **Pop-up lyrics.**
+  - Glass clarity and Tint change the card live.
+  - **Sync**: Line by line, or Word by word (Apple Music style).
+  - **Colors**: Accent, or Cover art, with text that turns dark on a bright tint.
+  - The card opens the player again.
+- **Dynamic colors** uses the cover's most vibrant color (else its main one), raised until it reads on black, and fades
+  between songs.
+- **Keychain restore** applies what it brings back: picture backgrounds, the theme and add-ons. Anything it couldn't
+  bring back is named.
+
+Root causes:
+
+- Art: the art lookup only knew the 7 first add-ons' ids.
+- Vinyl colors: the color change was an animation inside the record, which is paused (speed 0) whenever the record is
+  still, so it never showed.
+- Vinyl BPM: the tempo was only fetched at the next song. Sleeves were too faint to see.
+- Pop-up clarity: on real glass, the slider only swapped the glass style at its midpoint.
+- Pop-up tint: it was a faint corner gradient inside the glass.
+- Pop-up expand: Spotify's bar opens the player from a tap recognizer, and Mirage only tried a control action and
+  VoiceOver activate.
+- Keychain restore: it wrote the settings only. The background files were gone after the reinstall, and the theme
+  wasn't repainted.
+- DJ Start: every set was started by playing its first pick as a new context.
+
+Limits, honestly:
+
+- Word by word uses word timings when the lyrics source has them. Otherwise the words are spread across the line by
+  length, and the header says **LYRICS ≈**.
+- BPM spin still needs Spotify's audio features, which are often refused. Then the chosen speed is used.
+- Video backgrounds aren't kept in the keychain, because they're too big.
+- If Spotify's queue refuses the set, its first song plays when yours ends. Skip yours, and the set waits.
+- The pop-up card opens the player through Spotify's own bar tap. A Spotify update that changes the bar can stop it.
+
 ## 0.6.6: radio, focus, the queue, Now Playing add-ons, version resilience
 
 New add-ons (all off by default, each with its own shop art and icon, settings on the Mirage page once on):
