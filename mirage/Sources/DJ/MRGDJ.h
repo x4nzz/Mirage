@@ -81,6 +81,9 @@ void MRGDJSetShowsPill(BOOL on);
 BOOL MRGDJShowsPlayerButton(void);   // the DJ button and caption on Now Playing
 void MRGDJSetShowsPlayerButton(BOOL on);
 BOOL MRGDJDucks(void);
+// 0.6.8: the DJ talks between songs (over the end of one, into the next), on by default; off, over each song's start.
+BOOL MRGDJTalksBetween(void);
+void MRGDJSetTalksBetween(BOOL on);
 void MRGDJSetDucks(BOOL on);
 NSString *MRGDJDeviceVoiceName(void);   // the on-device voice it picked, for settings
 

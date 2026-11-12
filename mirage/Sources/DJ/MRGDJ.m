@@ -24,6 +24,8 @@ BOOL MRGDJShowsPill(void) { return [V(@"mirage.dj.pill", @YES) boolValue]; }
 void MRGDJSetShowsPill(BOOL on) { [D() setBool:on forKey:@"mirage.dj.pill"]; MRGPostChange(); }
 BOOL MRGDJShowsPlayerButton(void) { return [V(@"mirage.dj.playerButton", @YES) boolValue]; }
 void MRGDJSetShowsPlayerButton(BOOL on) { [D() setBool:on forKey:@"mirage.dj.playerButton"]; MRGPostChange(); }
+BOOL MRGDJTalksBetween(void) { return [V(@"mirage.dj.between", @YES) boolValue]; }
+void MRGDJSetTalksBetween(BOOL on) { [D() setBool:on forKey:@"mirage.dj.between"]; MRGPostChange(); }
 BOOL MRGDJDucks(void) { return [V(@"mirage.dj.duck", @YES) boolValue]; }
 void MRGDJSetDucks(BOOL on) { [D() setBool:on forKey:@"mirage.dj.duck"]; }
 
@@ -258,6 +260,8 @@ static NSString *artistCandidate(NSString *request, NSInteger *mode, BOOL *plain
 
 @implementation MRGDJ {
     NSString *_segmentName;   // the current segment's name, when the set is one
+    NSString *_outroFor;          // the set song whose line was said over the end of the song before it
+    NSTimer *_outroTimer;
     NSString *_nextSegmentName;   // the name the next start takes (Switch it up's segments)
     NSUInteger _segmentCursor;    // which segment Switch it up goes to next
     NSMutableSet<NSString *> *_spoken;
@@ -313,6 +317,10 @@ static NSString *artistCandidate(NSString *request, NSInteger *mode, BOOL *plain
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(trackChanged:) name:MRGPlayerTrackChangedNotification object:nil];
     // Spotify's queue can change under the set (the listener edits it, a play wipes it): checked every 25 s while a set is on.
     [NSTimer scheduledTimerWithTimeInterval:25 target:self selector:@selector(syncTick) userInfo:nil repeats:YES];
+    // Between songs: the end of each set song is watched for the moment to come in over it (once a second, half a
+    // second when the end is near; nothing at all while no set plays).
+    _outroTimer = [NSTimer scheduledTimerWithTimeInterval:0.5 target:self selector:@selector(outroTick) userInfo:nil repeats:YES];
+    _outroTimer.tolerance = 0.15;
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(voiceResult:) name:MRGVoiceResultNotification object:nil];
     return self;
 }
@@ -1182,6 +1190,7 @@ static NSInteger requestKind(NSString *request, NSString **title, NSString **art
 
 - (void)quiet {
     _speakToken++;
+    _outroFor = nil;
     [MRGVoiceSpeaker.shared stop];
     MRGDuckMusic(NO);
     if (_speaking) [self setSpeaking:NO line:nil];
@@ -1739,6 +1748,11 @@ static NSString *plain(NSString *s) {
         return;
     }
     MRGDJTrack *t = _set[index];
+    if ([_outroFor isEqualToString:t.uri]) {
+        // Its line was said over the end of the last song and may still be going: it carries on into this one.
+        [_spoken addObject:uri];
+        _outroFor = nil;
+    }
     if (![_spoken containsObject:uri]) {
         [_spoken addObject:uri];
         NSInteger nth = _talkCount++;
@@ -1782,6 +1796,41 @@ static NSString *plain(NSString *s) {
 // and re-sent in set order, anything the listener queued kept after them), at most twice per set; after that, step
 // mode: Mirage plays each missing song itself when its turn comes. A different order in Spotify (the listener dragged
 // things around) is followed by the set.
+// 0.6.8, talking between songs like Spotify's DJ: the next set song's line starts over the last seconds of the song on,
+// timed to end about as that song does, with the music lowered under it and brought back up once the line is done
+// (the duck is held by the speaker, so it also comes back if the line fails). Only when Spotify's queue really has
+// that song next (or Mirage plays it itself), never over an ad, a pause or a song the listener seeks around in.
+static double lineSeconds(NSString *line) {
+    NSUInteger words = [[line componentsSeparatedByCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet] filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"length > 0"]].count;
+    return MIN(9, MAX(2.5, words * 0.36 + 0.8));
+}
+
+- (void)outroTick {
+    if (_state != MRGDJPlaying || !MRGDJTalksBetween() || _speaking || MRGVoiceGetEngine() == MRGVoiceEngineOff) return;
+    if (UIApplication.sharedApplication.applicationState == UIApplicationStateBackground && NSProcessInfo.processInfo.isLowPowerModeEnabled) return;
+    NSInteger index = _currentIndex;
+    NSInteger next = index >= 0 ? index + 1 : (_pendingAfter ? 0 : -1);   // a set lined up behind the song on starts at 0
+    if (next < 0 || next >= (NSInteger)_set.count) return;
+    MRGDJTrack *t = _set[next];
+    if (!t.line.length || [_spoken containsObject:t.uri] || [_outroFor isEqualToString:t.uri]) return;
+    if (!([_playbackMode isEqualToString:@"queue"] && t.queueState == MRGDJQueueQueued) && t.queueState != MRGDJQueueMissing) return;
+    MRGDJTalk talk = MRGDJTalkEffective();
+    NSInteger nth = _talkCount;
+    BOOL talks = talk == MRGDJTalkEvery || nth == 0 || (talk == MRGDJTalkFew && nth % 3 == 0);
+    if (!talks || MRGPlayerIsAd() || !MRGPlayerIsPlaying()) return;
+    double pos = 0, dur = 0;
+    if (!MRGPlayerProgress(&pos, &dur) || dur < 30) return;
+    double left = dur - pos, need = lineSeconds(t.line);
+    // In over the outro, finishing a beat into the next song; not when the song is nearly over already.
+    if (left > need - 1.0 || left < 2.0) return;
+    _outroFor = [t.uri copy];
+    _talkCount++;
+    _currentLine = [t.line copy];
+    MRGDJLog(@"voice: in over the end of the song, %.1fs left, for \"%@\"", left, t.title);
+    [self speak:t.line];
+    [self changed];
+}
+
 - (void)mark:(NSArray<MRGDJTrack *> *)tracks state:(MRGDJQueueState)state {
     for (MRGDJTrack *t in tracks) t.queueState = state;
     [self changed];

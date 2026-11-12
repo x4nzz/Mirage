@@ -511,7 +511,7 @@ UIViewController *MRGVoicePage(void) { return [MRGVoicePageController new]; }
     return MRGSafeCount(^NSInteger { return [self mrg_rowsIn:t section:s]; });
 }
 
-- (NSInteger)mrg_rowsIn:(UITableView *)t section:(NSInteger)s { return s == 0 ? MRGDJPersonaNames().count : s == 1 ? 4 : 1; }
+- (NSInteger)mrg_rowsIn:(UITableView *)t section:(NSInteger)s { return s == 0 ? MRGDJPersonaNames().count : s == 1 ? 5 : 1; }
 - (NSString *)tableView:(UITableView *)t titleForHeaderInSection:(NSInteger)s { return @[@"Persona", @"How often the DJ talks", @"Your instructions"][s]; }
 - (NSString *)tableView:(UITableView *)t titleForFooterInSection:(NSInteger)s {
     return MRGSafeString(^NSString *{ return [self mrg_footerIn:t section:s]; });
@@ -519,7 +519,7 @@ UIViewController *MRGVoicePage(void) { return [MRGVoicePageController new]; }
 
 - (NSString *)mrg_footerIn:(UITableView *)t section:(NSInteger)s {
     if (s == 0) return nil;
-    if (s == 1) return nil;
+    if (s == 1) return @"Between songs: the DJ comes in over the end of a song and talks into the next one, the music lowered under it, like Spotify's DJ. Off, it talks over the start of each song.";
     return @"e.g. \"no rap\", \"mostly 2000s\". Sent to your AI provider.";
 }
 - (CGFloat)tableView:(UITableView *)t heightForRowAtIndexPath:(NSIndexPath *)ip { return ip.section == 2 ? 120 : UITableViewAutomaticDimension; }
@@ -540,6 +540,11 @@ UIViewController *MRGVoicePage(void) { return [MRGVoicePageController new]; }
         c.accessoryType = MRGDJPersona() == ip.row ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone;
         return c;
     }
+    if (ip.section == 1 && ip.row == 4) {
+        UITableViewCell *c = [self cell:@"Talk between songs" detail:nil symbol:nil];
+        c.accessoryType = MRGDJTalksBetween() ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone;
+        return c;
+    }
     if (ip.section == 1) {
         UITableViewCell *c = [self cell:@[@"Auto", @"Every track", @"Every few tracks", @"Only on switches"][ip.row] detail:nil symbol:nil];
         c.accessoryType = MRGDJTalkSetting() == ip.row ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone;
@@ -556,6 +561,7 @@ UIViewController *MRGVoicePage(void) { return [MRGVoicePageController new]; }
 - (void)tableView:(UITableView *)t didSelectRowAtIndexPath:(NSIndexPath *)ip {
     [t deselectRowAtIndexPath:ip animated:YES];
     if (ip.section == 0) MRGDJSetPersona(ip.row);
+    else if (ip.section == 1 && ip.row == 4) MRGDJSetTalksBetween(!MRGDJTalksBetween());
     else if (ip.section == 1) MRGDJSetTalkSetting(ip.row);
     else { [_prompt becomeFirstResponder]; return; }
     [t reloadSections:[NSIndexSet indexSetWithIndex:ip.section] withRowAnimation:UITableViewRowAnimationNone];
