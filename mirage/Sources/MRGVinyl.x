@@ -231,7 +231,7 @@ static void logState(NSString *state) {
     MRGVinylProxy *p = [MRGVinylProxy new];
     p.owner = self;
     _link = [CADisplayLink displayLinkWithTarget:p selector:@selector(frame:)];
-    if ([_link respondsToSelector:@selector(setPreferredFramesPerSecond:)]) _link.preferredFramesPerSecond = 60;
+    if ([_link respondsToSelector:@selector(setPreferredFramesPerSecond:)]) _link.preferredFramesPerSecond = NSProcessInfo.processInfo.isLowPowerModeEnabled ? 30 : 60;
     [_link addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
     [self startSpin];
     [self slowTick];
@@ -371,7 +371,8 @@ static UIView *coverIn(UIView *tilt) {
     @try {
         if (!self.window) return;
         if (!_disc.animationKeys.count) [self startSpin];
-        [self setSpinning:MRGPlayerIsPlaying()];
+        // Low Power Mode: the record holds still (it still follows the cover), like the other animated add-ons.
+        [self setSpinning:MRGPlayerIsPlaying() && !NSProcessInfo.processInfo.isLowPowerModeEnabled];
         UIImage *img = coverImage([self trackedCover] ?: self.tilt, 0);
         if (img && img != _shownImage && img.CGImage) {
             _shownImage = img;
