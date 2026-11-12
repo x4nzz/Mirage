@@ -96,8 +96,29 @@ static UIView *findIdentifier(UIView *root, NSString *ident) {
     return nil;
 }
 
-// The now playing bar answers VoiceOver's activate by opening the player, the same as a tap; a control inside it
-// (the bar in some layouts) fires its own action. NO when the bar isn't on screen.
+// 0.6.7 root cause of "the expand button does nothing": 0.6.6 only tried the bar as a UIControl and its VoiceOver
+// activate. Spotify's bar is neither: it opens the player from a tap gesture recognizer (on the bar's card or a view
+// around it), and a plain view's accessibilityActivate answers NO, so the tap was only logged. Now, in order: a
+// control the size of the bar, VoiceOver activate, then the bar's own tap recognizer's action, called the way UIKit
+// calls it. Never the bar's small buttons (play, devices), which would do something else.
+static BOOL sendTap(UIGestureRecognizer *g) {
+    if (![g isKindOfClass:UITapGestureRecognizer.class] || !g.enabled || ((UITapGestureRecognizer *)g).numberOfTapsRequired != 1) return NO;
+    Ivar targetsIvar = class_getInstanceVariable(UIGestureRecognizer.class, "_targets");
+    NSArray *targets = targetsIvar ? object_getIvar(g, targetsIvar) : nil;
+    if (![targets isKindOfClass:NSArray.class]) return NO;
+    BOOL sent = NO;
+    for (id entry in targets) {
+        Ivar ti = class_getInstanceVariable([entry class], "_target"), ai = class_getInstanceVariable([entry class], "_action");
+        if (!ti || !ai) continue;
+        id target = object_getIvar(entry, ti);
+        SEL action = *(SEL *)((uint8_t *)(__bridge void *)entry + ivar_getOffset(ai));
+        if (!target || !action || ![target respondsToSelector:action]) continue;
+        ((void (*)(id, SEL, id))objc_msgSend)(target, action, g);
+        sent = YES;
+    }
+    return sent;
+}
+
 static BOOL openPlayer(UIView *from) {
     UIView *bar = nil;
     for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
@@ -107,9 +128,31 @@ static BOOL openPlayer(UIView *from) {
     }
     if (!bar || !bar.window || bar.hidden) return NO;
     @try {
-        if ([bar isKindOfClass:UIControl.class]) { [(UIControl *)bar sendActionsForControlEvents:UIControlEventTouchUpInside]; return YES; }
-        if ([bar accessibilityActivate]) return YES;
-        for (UIGestureRecognizer *g in bar.gestureRecognizers) if ([g isKindOfClass:UITapGestureRecognizer.class] && g.enabled) { MRGDJLog(@"pop-up lyrics: the bar has a tap recognizer only"); break; }
+        CGSize size = bar.bounds.size;
+        BOOL (^big)(UIView *) = ^BOOL(UIView *v) { return v.bounds.size.width >= size.width * 0.7 && v.bounds.size.height >= size.height * 0.6; };
+        // The bar, the views around it that are about its size (the recognizer may sit on its container), and the
+        // big views inside it.
+        NSMutableArray<UIView *> *candidates = [NSMutableArray arrayWithObject:bar];
+        UIView *up = bar.superview;
+        for (int i = 0; i < 3 && up && up.bounds.size.height <= size.height * 1.8; i++, up = up.superview) [candidates addObject:up];
+        NSMutableArray *stack = [NSMutableArray arrayWithArray:bar.subviews];
+        while (stack.count && candidates.count < 40) {
+            UIView *v = stack.lastObject; [stack removeLastObject];
+            if (!big(v)) continue;
+            [candidates addObject:v];
+            [stack addObjectsFromArray:v.subviews];
+        }
+        for (UIView *v in candidates) if ([v isKindOfClass:UIControl.class] && big(v) && ((UIControl *)v).enabled) {
+            [(UIControl *)v sendActionsForControlEvents:UIControlEventTouchUpInside];
+            MRGDJLog(@"pop-up lyrics: opened the player through %@", NSStringFromClass(v.class));
+            return YES;
+        }
+        for (UIView *v in candidates) if ([v accessibilityActivate]) { MRGDJLog(@"pop-up lyrics: opened the player through VoiceOver activate"); return YES; }
+        for (UIView *v in candidates) for (UIGestureRecognizer *g in v.gestureRecognizers) if (sendTap(g)) {
+            MRGDJLog(@"pop-up lyrics: opened the player through the bar's tap on %@", NSStringFromClass(v.class));
+            return YES;
+        }
+        MRGDJLog(@"pop-up lyrics: the now playing bar has nothing to open the player with");
     } @catch (NSException *e) { MRGDJLog(@"pop-up lyrics: opening the player threw %@", e.reason); }
     return NO;
 }
@@ -243,6 +286,7 @@ static void shadowText(UILabel *l) {
     _open = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"arrow.up.left.and.arrow.down.right" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:13 weight:UIImageSymbolWeightSemibold]]];
     _open.tintColor = [UIColor colorWithWhite:1 alpha:0.55];
     _open.contentMode = UIViewContentModeCenter;
+    _open.userInteractionEnabled = NO;   // the whole card is the button; the icon only says what it does
     _clip = [UIView new];
     _clip.clipsToBounds = YES;
     _fade = [CAGradientLayer layer];
