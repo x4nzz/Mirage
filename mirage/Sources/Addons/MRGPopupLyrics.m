@@ -167,6 +167,10 @@ static void shadowText(UILabel *l) {
 
 @implementation MRGLyricsShelf {
     UIVisualEffectView *_glass;
+    UIVisualEffectView *_frost;   // a real blur under liquid glass, faded in by Glass clarity
+    UIView *_wash;                // the tint, under the glass so the glass shows it through
+    CGFloat _shownFrost, _shownTint;
+    NSInteger _shownTintRGB;
     BOOL _liquid;          // UIGlassEffect (iOS 26), else a thin material blur
     BOOL _clearGlass;      // the clear glass style is in use
     CAGradientLayer *_tint, *_fade;
@@ -202,6 +206,20 @@ static void shadowText(UILabel *l) {
         _glass.layer.borderWidth = 0.5;
         _glass.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.18].CGColor;
     }
+    _frost = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterialDark]];
+    _frost.userInteractionEnabled = NO;
+    _frost.clipsToBounds = YES;
+    _frost.layer.cornerRadius = 22;
+    _frost.layer.cornerCurve = kCACornerCurveContinuous;
+    _frost.alpha = 0;
+    _wash = [UIView new];
+    _wash.userInteractionEnabled = NO;
+    _wash.layer.cornerRadius = 22;
+    _wash.layer.cornerCurve = kCACornerCurveContinuous;
+    _shownFrost = _shownTint = -1;
+    _shownTintRGB = -1;
+    [self addSubview:_frost];
+    [self addSubview:_wash];
     [self addSubview:_glass];
     _tint = [CAGradientLayer layer];
     _tint.startPoint = CGPointMake(0, 0);
@@ -262,13 +280,15 @@ static void shadowText(UILabel *l) {
     [super layoutSubviews];
     CGRect b = self.bounds;
     _glass.frame = b;
+    _frost.frame = b;
+    _wash.frame = b;
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
-    UIColor *accent = MRGAccent();
+    UIColor *accent = [self tintColorNow];
     _tint.frame = b;
-    // A wash, not a fill: the glass itself carries the material.
+    // The sheen over the text: strongest top-left, still there across the card (0.6.6 faded to nothing by the middle).
     CGFloat top = tintAmount();
-    _tint.colors = @[(id)[accent colorWithAlphaComponent:top].CGColor, (id)[accent colorWithAlphaComponent:top * 0.25].CGColor, (id)UIColor.clearColor.CGColor];
+    _tint.colors = @[(id)[accent colorWithAlphaComponent:top].CGColor, (id)[accent colorWithAlphaComponent:top * 0.6].CGColor, (id)[accent colorWithAlphaComponent:top * 0.35].CGColor];
     [CATransaction commit];
     CGFloat pad = 16;
     _icon.frame = CGRectMake(pad, 14, 22, 22);
@@ -295,19 +315,40 @@ static void shadowText(UILabel *l) {
 }
 
 // What should be up: the lines of the playing song, or nothing (the section closes).
-// Clarity and tint, live: the glass style is swapped when the slider crosses the middle (iOS 26), and the blur's
-// strength follows the slider before that (a material blur faded toward clear).
+- (UIColor *)tintColorNow { return MRGAccent(); }
+
+// Clarity and tint, live. 0.6.7 root cause of "the sliders change nothing": on iOS 26 the card is real glass, and
+// 0.6.6 only swapped the glass style when Clarity crossed the middle (the fade it did is skipped for real glass), and
+// the tint was a faint corner gradient inside the glass's content, under the glass's own rendering. Now Clarity fades
+// a real blur in under the glass across the whole slider, and Tint colors a wash under the glass, the glass's own
+// tint (iOS 26) and the sheen over the text, all at once.
 - (void)applyGlass {
-    CGFloat f = frost();
+    CGFloat f = frost(), t = tintAmount();
+    UIColor *color = [self tintColorNow];
+    CGFloat r = 0, g = 0, bl = 0, a = 0;
+    [color getRed:&r green:&g blue:&bl alpha:&a];
+    NSInteger rgb = ((NSInteger)lround(r * 255) << 16) | ((NSInteger)lround(g * 255) << 8) | (NSInteger)lround(bl * 255);
     BOOL clear = f < 0.5;
-    if (_liquid && clear != _clearGlass) {
+    BOOL restyle = _liquid && (clear != _clearGlass || fabs(t - _shownTint) > 0.004 || rgb != _shownTintRGB);
+    if (restyle) {
         _clearGlass = clear;
         BOOL liquid = NO;
-        UIVisualEffect *e = glassEffect(&liquid, clear);
-        if (liquid) _glass.effect = e;
+        UIVisualEffect *e = [glassEffect(&liquid, clear) copy];   // a copy: Vitrine's effect may be shared
+        if (liquid && e) {
+            if (t > 0.005 && [e respondsToSelector:@selector(setTintColor:)]) {
+                @try { [(id)e setTintColor:[color colorWithAlphaComponent:MIN(0.6, t * 1.2)]]; } @catch (NSException *x) {}
+            }
+            _glass.effect = e;
+        }
     }
-    // Real glass is never faded (it would lose its edge); the blur fallback is, from almost nothing to full frost.
+    _shownTint = t;
+    _shownTintRGB = rgb;
+    _shownFrost = f;
+    // Real glass is never faded (it would lose its edge): the blur under it is. The blur fallback fades itself.
+    _frost.hidden = !_liquid;
+    _frost.alpha = _liquid ? f : 0;
     _glass.alpha = _liquid ? 1 : 0.12 + 0.88 * f;
+    _wash.backgroundColor = [color colorWithAlphaComponent:MIN(0.55, t * 1.1)];
     [self setNeedsLayout];
 }
 
@@ -577,7 +618,7 @@ void MRGPopupPlace(UIView *page) {
     MRGAddonSetting *size = [MRGAddonSetting slider:@"size" title:@"Text size" min:18 max:30 fallback:24];
     MRGAddonSetting *lines = [MRGAddonSetting picker:@"lines" title:@"Lines shown" options:@[@"3", @"4", @"5"] values:@[@3, @4, @5] fallback:@4];
     MRGAddonSetting *clarity = [MRGAddonSetting slider:@"frost" title:@"Glass clarity" min:0 max:1 fallback:0.3];
-    clarity.footer = @"Left is clear, right is frosted.";
+    clarity.footer = @"Left is clear glass, right is fully frosted.";
     clarity.live = YES;
     MRGAddonSetting *tint = [MRGAddonSetting slider:@"tint" title:@"Tint" min:0 max:0.5 fallback:0.10];
     tint.live = YES;
