@@ -13,3 +13,6 @@ void MRGLookSetDynamicRGB(NSInteger (^block)(void));
 void MRGLookSetSwitchRGB(NSInteger (^block)(void));
 void MRGLookSetGlassTint(UIColor *(^block)(void));
 void MRGLookRefresh(void);
+// After settings are restored (a reinstall, the keychain backup): the applied theme read again, its generated
+// background picture made again if it is missing, and everything repainted. Main thread.
+void MRGThemeRestoreFiles(void);

@@ -9,6 +9,8 @@
 #import "MRGAddons.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <Security/Security.h>
+#import <ImageIO/ImageIO.h>
+#import "Addons/MRGThemes.h"
 
 static NSString *const kInclude = @"mirage.saver.includeFiles";
 
@@ -191,6 +193,96 @@ static NSDictionary *backupRead(NSDate **savedOut) {
     return doc[@"prefs"];
 }
 
+#pragma mark - background pictures in the keychain (0.6.7)
+
+// 0.6.7 root cause of "restore selects the backgrounds but doesn't apply them": the pictures are files in
+// Documents/Mirage/Backgrounds, which a reinstall deletes, and the backup only held the settings (the names). The
+// restored selection pointed at files that weren't there, so every screen showed none. Now each picture background is
+// also kept in the keychain (its own item, service com.x4nzz.mirage.settings, account "bg:<file>"), as a JPEG at most
+// 1800px on its long side, up to 8 pictures; videos are too big for the keychain and are named as not restored.
+static NSString *const kBackupFiles = @"mirage.saver.keychainFiles";   // the names kept (bookkeeping, not a setting)
+static NSString *const kBackupNote = @"mirage.saver.keychainNote";     // what the last restore couldn't bring back
+
+static NSMutableDictionary *fileQuery(NSString *file) {
+    return [@{(id)kSecClass: (id)kSecClassGenericPassword, (id)kSecAttrService: kBackupService,
+              (id)kSecAttrAccount: [@"bg:" stringByAppendingString:file], (id)kSecAttrSynchronizable: @NO} mutableCopy];
+}
+
+static NSData *keptJPEG(NSURL *url) {
+    CGImageSourceRef src = CGImageSourceCreateWithURL((__bridge CFURLRef)url, NULL);
+    if (!src) return nil;
+    NSDictionary *opts = @{(id)kCGImageSourceCreateThumbnailFromImageAlways: @YES, (id)kCGImageSourceThumbnailMaxPixelSize: @1800,
+                           (id)kCGImageSourceCreateThumbnailWithTransform: @YES};
+    CGImageRef img = CGImageSourceCreateThumbnailAtIndex(src, 0, (__bridge CFDictionaryRef)opts);
+    CFRelease(src);
+    if (!img) return nil;
+    NSMutableData *out = [NSMutableData data];
+    CGImageDestinationRef dst = CGImageDestinationCreateWithData((__bridge CFMutableDataRef)out, CFSTR("public.jpeg"), 1, NULL);
+    if (dst) {
+        CGImageDestinationAddImage(dst, img, (__bridge CFDictionaryRef)@{(id)kCGImageDestinationLossyCompressionQuality: @0.82});
+        if (!CGImageDestinationFinalize(dst)) out = nil;
+        CFRelease(dst);
+    } else out = nil;
+    CGImageRelease(img);
+    return out.length ? out : nil;
+}
+
+// On the autosave queue: new picture backgrounds are copied in, deleted ones taken out. A theme's generated picture
+// is left out (the theme makes it again).
+static void backupFilesOnQueue(void) {
+    NSUserDefaults *d = NSUserDefaults.standardUserDefaults;
+    NSArray *had = [d arrayForKey:kBackupFiles] ?: @[];
+    NSMutableArray *want = [NSMutableArray array];
+    for (NSDictionary *item in MRGBackgroundLibrary()) {
+        NSString *file = item[@"file"];
+        if (![file isKindOfClass:NSString.class] || [file hasPrefix:@"theme-"] || [item[@"kind"] integerValue] != MRGMediaImage) continue;
+        if (want.count < 8) [want addObject:file];
+    }
+    NSMutableArray *kept = [NSMutableArray array];
+    for (NSString *file in want) {
+        if ([had containsObject:file]) { [kept addObject:file]; continue; }
+        NSData *jpg = keptJPEG([MRGMediaDirectory() URLByAppendingPathComponent:file]);
+        if (!jpg || jpg.length > 2 * 1024 * 1024) continue;
+        NSDictionary *attrs = @{(id)kSecValueData: jpg, (id)kSecAttrAccessible: (id)kSecAttrAccessibleAfterFirstUnlock};
+        OSStatus st = SecItemUpdate((CFDictionaryRef)fileQuery(file), (CFDictionaryRef)attrs);
+        if (st == errSecItemNotFound) { NSMutableDictionary *add = fileQuery(file); [add addEntriesFromDictionary:attrs]; st = SecItemAdd((CFDictionaryRef)add, NULL); }
+        if (st == errSecSuccess) [kept addObject:file];
+        else MRGDJLog(@"settings: keychain refused background %@ (error %d)", file, (int)st);
+    }
+    for (NSString *file in had) if (![want containsObject:file]) SecItemDelete((CFDictionaryRef)fileQuery(file));
+    if (![kept isEqualToArray:had]) [d setObject:kept forKey:kBackupFiles];
+}
+
+// Brings back every listed background file that's missing. Returns the names it couldn't (videos, or pictures the
+// keychain doesn't have).
+static NSArray<NSString *> *restoreFiles(void) {
+    NSMutableArray *missing = [NSMutableArray array];
+    NSUInteger restored = 0;
+    for (NSDictionary *item in MRGBackgroundLibrary()) {
+        NSString *file = item[@"file"];
+        if (![file isKindOfClass:NSString.class] || [file containsString:@"/"] || [file containsString:@".."]) continue;
+        NSURL *url = [MRGMediaDirectory() URLByAppendingPathComponent:file];
+        if ([NSFileManager.defaultManager fileExistsAtPath:url.path] || [file hasPrefix:@"theme-"]) continue;
+        NSMutableDictionary *q = fileQuery(file);
+        q[(id)kSecReturnData] = @YES;
+        q[(id)kSecMatchLimit] = (id)kSecMatchLimitOne;
+        CFTypeRef out = NULL;
+        NSData *data = nil;
+        if (SecItemCopyMatching((CFDictionaryRef)q, &out) == errSecSuccess && out) data = (__bridge_transfer NSData *)out;
+        if ([data isKindOfClass:NSData.class] && data.length && [data writeToURL:url atomically:YES]) { restored++; continue; }
+        NSString *name = [item[@"name"] isKindOfClass:NSString.class] ? item[@"name"] : file;
+        [missing addObject:[item[@"kind"] integerValue] == MRGMediaVideo ? [name stringByAppendingString:@" (video)"] : name];
+    }
+    if (restored) MRGDJLog(@"settings: restored %lu background picture(s) from the keychain", (unsigned long)restored);
+    NSUserDefaults *d = NSUserDefaults.standardUserDefaults;
+    if (missing.count) {
+        NSString *note = [NSString stringWithFormat:@"Not in the backup, add again: %@.", [missing componentsJoinedByString:@", "]];
+        [d setObject:note forKey:kBackupNote];
+        MRGDJLog(@"settings: %@", note);
+    } else [d removeObjectForKey:kBackupNote];
+    return missing;
+}
+
 // Writes the settings that pass the same filter as an import; returns how many.
 static NSUInteger applySaved(NSDictionary *saved) {
     NSUserDefaults *d = NSUserDefaults.standardUserDefaults;
@@ -220,6 +312,7 @@ static void autosaveOnQueue(void) {
         if (!prefs.count || [prefs isEqualToDictionary:sLastSaved ?: @{}]) return;
         BOOL file = [prefs writeToURL:autosaveURL() atomically:YES];
         BOOL keychain = backupWrite(prefs);
+        @try { backupFilesOnQueue(); } @catch (NSException *e) { MRGDJLog(@"settings: background backup threw %@", e.reason); }
         if (file) sLastSaved = prefs;   // a refused keychain write is retried with the next change, not in a loop
         (void)keychain;
         if (![NSUserDefaults.standardUserDefaults boolForKey:kPresent]) [NSUserDefaults.standardUserDefaults setBool:YES forKey:kPresent];
@@ -274,6 +367,9 @@ static void autosaveRestore(void) {
         NSUInteger n = applySaved(saved);
         [d setBool:YES forKey:kPresent];
         MRGDJLog(@"settings: restored %lu settings from %@", (unsigned long)n, from);
+        // The pictures the settings point at, then (on the first main turn, before Home shows) the theme and a repaint.
+        @try { restoreFiles(); } @catch (NSException *e) { MRGDJLog(@"settings: background restore threw %@", e.reason); }
+        dispatch_async(dispatch_get_main_queue(), ^{ MRGThemeRestoreFiles(); MRGPostChange(); });
     } @catch (NSException *e) {
         MRGDJLog(@"settings: autosave restore threw %@", e.reason);
     }
@@ -283,11 +379,13 @@ NSString *MRGSettingsBackupSummary(void) {
     NSUserDefaults *d = NSUserDefaults.standardUserDefaults;
     NSString *err = [d stringForKey:kBackupError];
     if (err.length) return [@"Keychain · not saved: " stringByAppendingString:err];
+    NSString *note = [d stringForKey:kBackupNote];
     double at = [d doubleForKey:kBackupAt];
     if (at <= 0) return @"Keychain · not saved yet";
     static NSDateFormatter *f;
     if (!f) { f = [NSDateFormatter new]; f.dateStyle = NSDateFormatterShortStyle; f.timeStyle = NSDateFormatterShortStyle; f.doesRelativeDateFormatting = YES; }
-    return [@"Keychain · last saved " stringByAppendingString:[f stringFromDate:[NSDate dateWithTimeIntervalSince1970:at]]];
+    NSString *line = [@"Keychain · last saved " stringByAppendingString:[f stringFromDate:[NSDate dateWithTimeIntervalSince1970:at]]];
+    return note.length ? [NSString stringWithFormat:@"%@\n%@", line, note] : line;
 }
 
 void MRGSettingsRestoreBackup(void (^done)(NSUInteger restored, NSString *error)) {
@@ -297,9 +395,20 @@ void MRGSettingsRestoreBackup(void (^done)(NSUInteger restored, NSString *error)
         dispatch_async(dispatch_get_main_queue(), ^{
             if (!saved.count) { if (done) done(0, @"There's no settings backup in the keychain for this install."); return; }
             NSUInteger n = 0;
+            NSMutableDictionary *was = [NSMutableDictionary dictionary];
+            for (id<MRGAddon> addon in MRGRegisteredAddons()) was[addon.addonID] = @(MRGAddonInstalled(addon.addonID));
             @try { n = applySaved(saved); } @catch (NSException *e) { if (done) done(0, e.reason ?: @"The backup couldn't be applied."); return; }
             dispatch_async(saveQueue(), ^{ sLastSaved = nil; });
             MRGDJLog(@"settings: restored %lu settings from the keychain backup (by hand)", (unsigned long)n);
+            // 0.6.7: applied, not only written: the background pictures, add-ons started or stopped as the backup has
+            // them, the theme read again and repainted, then every screen told.
+            @try { restoreFiles(); } @catch (NSException *e) {}
+            for (id<MRGAddon> addon in MRGRegisteredAddons()) {
+                BOOL now = MRGAddonInstalled(addon.addonID);
+                if (now == [was[addon.addonID] boolValue]) continue;
+                if (now) MRGAddonRunEnable(addon.addonID); else MRGAddonRunDisable(addon.addonID);
+            }
+            MRGThemeRestoreFiles();
             MRGPostChange();
             if (done) done(n, nil);
         });

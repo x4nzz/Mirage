@@ -337,6 +337,26 @@ static void applyTheme(NSDictionary *theme, BOOL useBackground) {
     MRGDJLog(@"themes: applied %@", theme[@"id"]);
 }
 
+void MRGThemeRestoreFiles(void) {
+    @try {
+        forgetApplied();
+        NSDictionary *theme = MRGAppliedTheme();
+        NSInteger rgb = 0;
+        if (theme && hexColor(theme[@"background"], &rgb)) {
+            NSString *name = [NSString stringWithFormat:@"theme-%@.jpg", theme[@"id"]];
+            NSURL *file = [MRGMediaDirectory() URLByAppendingPathComponent:name];
+            // Only when the restored background list still points at it: a background picked after the theme wins.
+            BOOL listed = NO;
+            for (NSDictionary *item in MRGBackgroundLibrary()) if ([item[@"file"] isEqual:name]) listed = YES;
+            if (listed && ![NSFileManager.defaultManager fileExistsAtPath:file.path]) {
+                NSURL *made = backgroundFile(theme);
+                MRGDJLog(@"themes: restored %@'s background picture%@", theme[@"id"], made ? @"" : @" (failed)");
+            }
+        }
+        MRGLookRefresh();
+    } @catch (NSException *e) { MRGDJLog(@"themes: restore threw %@", e.reason); }
+}
+
 static void removeTheme(void) {
     NSString *name = MRGAppliedTheme()[@"name"];
     storeApplied(nil);

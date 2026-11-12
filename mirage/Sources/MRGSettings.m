@@ -892,7 +892,9 @@ static NSString *ip3(NSInteger row) { return row == 3 ? @"Voice" : row == 4 ? @"
     UIAlertController *a = [UIAlertController alertControllerWithTitle:@"Restore from backup" message:MRGSettingsBackupSummary() preferredStyle:UIAlertControllerStyleAlert];
     [a addAction:[UIAlertAction actionWithTitle:@"Restore" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *x) {
         MRGSettingsRestoreBackup(^(NSUInteger n, NSString *error) {
-            NSString *msg = error ?: [NSString stringWithFormat:@"%lu settings restored. Some show after Spotify restarts.", (unsigned long)n];
+            NSString *note = [NSUserDefaults.standardUserDefaults stringForKey:@"mirage.saver.keychainNote"];
+            NSString *msg = error ?: note.length ? [NSString stringWithFormat:@"%lu settings restored and applied. %@", (unsigned long)n, note]
+                                                 : [NSString stringWithFormat:@"%lu settings restored and applied, backgrounds and theme included.", (unsigned long)n];
             UIAlertController *b = [UIAlertController alertControllerWithTitle:error ? @"Nothing restored" : @"Restored" message:msg preferredStyle:UIAlertControllerStyleAlert];
             [b addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleCancel handler:nil]];
             if (self.isViewLoaded && self.view.window) { [self.tableView reloadData]; [self presentViewController:b animated:YES completion:nil]; }
