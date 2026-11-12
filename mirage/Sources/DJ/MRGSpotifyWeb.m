@@ -409,6 +409,28 @@ void MRGWebArtist(NSString *uri, void (^done)(NSDictionary *artist)) {
     call(@"GET", [NSString stringWithFormat:@"/artists/%@", aid], nil, ^(id j, NSInteger s, NSString *e) { done(e ? nil : artistOut(j)); });
 }
 
+// A track's tempo from the Web API's audio features (BPM), or 0. Spotify closed that endpoint to many apps in 2024;
+// after three refusals in a row it isn't asked again this session. Answers are cached.
+void MRGWebTempo(NSString *trackURI, void (^done)(double bpm)) {
+    static NSMutableDictionary<NSString *, NSNumber *> *cache;
+    static NSInteger refusals;
+    if (!cache) cache = [NSMutableDictionary dictionary];
+    NSString *tid = [trackURI hasPrefix:@"spotify:track:"] ? [trackURI substringFromIndex:14] : nil;
+    if (!tid.length || refusals >= 3) { done(0); return; }
+    NSNumber *hit = cache[tid];
+    if (hit) { done(hit.doubleValue); return; }
+    call(@"GET", [NSString stringWithFormat:@"/audio-features/%@", tid], nil, ^(id j, NSInteger s, NSString *e) {
+        id tempo = [j isKindOfClass:NSDictionary.class] ? j[@"tempo"] : nil;
+        double bpm = [tempo isKindOfClass:NSNumber.class] ? [tempo doubleValue] : 0;
+        if (bpm > 30 && bpm < 300) { refusals = 0; cache[tid] = @(bpm); done(bpm); return; }
+        if (s == 401 || s == 403 || s == 404) {
+            refusals++;
+            MRGDJLog(@"web: audio features refused (%ld)%@", (long)s, refusals >= 3 ? @", not asking again this session" : @"");
+        }
+        done(0);
+    });
+}
+
 #pragma mark - an artist's catalog, a label's roster
 
 static NSDictionary *albumTrack(NSDictionary *tr, NSDictionary *album, NSString *cover) {

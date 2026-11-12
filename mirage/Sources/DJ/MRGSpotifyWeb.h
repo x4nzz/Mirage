@@ -21,6 +21,8 @@ void MRGWebFindArtist(NSString *query, void (^done)(NSDictionary *artist, NSStri
 void MRGWebArtistTracks(NSDictionary *artist, NSInteger limit, void (^done)(NSArray<NSDictionary *> *tracks));
 void MRGWebRelatedArtists(NSDictionary *artist, void (^done)(NSArray<NSDictionary *> *artists));
 void MRGWebArtist(NSString *uri, void (^done)(NSDictionary *artist));
+// A track's BPM from the Web API's audio features, 0 when Spotify doesn't give it (the endpoint is often closed).
+void MRGWebTempo(NSString *trackURI, void (^done)(double bpm));
 // Fuzzy name matching shared with the DJ.
 void MRGWebArtistCatalog(NSDictionary *artist, NSInteger max, void (^done)(NSArray<NSDictionary *> *tracks));
 void MRGWebLabelArtists(NSString *label, void (^done)(NSArray<NSDictionary *> *artists));

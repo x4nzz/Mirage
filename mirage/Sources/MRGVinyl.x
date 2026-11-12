@@ -33,12 +33,27 @@
 #import "MRGPrefs.h"
 #import "MRGPlayer.h"
 #import "MRGDJLog.h"
+#import "MRGNowKit.h"
+#import "MRGSpotifyWeb.h"
+
+// 0.6.6 variants: the record's color (black, the cover's own colors, the accent, clear red, white), the sleeve's
+// finish (plain, glossy, worn), and a spin that follows the song's tempo (one turn per four beats) when Spotify gives
+// the app the song's BPM; when it doesn't (its audio features endpoint is closed to many apps), the chosen speed.
+static NSInteger recordColor(void) { return [NSUserDefaults.standardUserDefaults integerForKey:@"mirage.addon.vinyl.color"]; }
+static NSInteger sleeveStyle(void) { return [NSUserDefaults.standardUserDefaults integerForKey:@"mirage.addon.vinyl.sleeve"]; }
+static BOOL followBPM(void) { return [NSUserDefaults.standardUserDefaults boolForKey:@"mirage.addon.vinyl.bpm"]; }
+static double sTempo;            // the playing song's BPM, 0 when unknown
+static NSString *sTempoFor;
+static double turnSeconds(void) {
+    if (followBPM() && sTempo > 0) return MIN(3.5, MAX(1.0, 240.0 / sTempo));
+    return MRGVinylSecondsPerTurn();
+}
 
 static const CGFloat kPeek = 0.20;          // how much record shows past the sleeve, of the sleeve's width
 static const CGFloat kMargin = 12;          // the piece's side margin on screen
 static const CGFloat kMinCover = 0.55;      // the sleeve never gets smaller than this, of the tilt view's size
 static const CGFloat kDisc = 0.92;          // the record's diameter, of the sleeve's width
-static char kVinylKey, kOursKey, kClipKey, kUnclippedKey;
+static char kVinylKey, kOursKey, kClipKey, kUnclippedKey, kSleeveKey;
 static CFTimeInterval sg_glideUntil;   // right after the add-on or its side changed: the cover glides, else it is set
 
 static Class tiltClass(void) {
@@ -115,6 +130,8 @@ static void logState(NSString *state) {
     __weak UIView *_cover;      // the cover being followed, held weakly
     CGAffineTransform _lastM;
     float _lastOpacity;
+    NSInteger _colorMode;
+    __weak UIImage *_colorImage;
 }
 
 - (instancetype)initWithFrame:(CGRect)frame {
@@ -169,7 +186,8 @@ static void logState(NSString *state) {
     _sheenMask.fillRule = kCAFillRuleEvenOdd;
     _sheen.mask = _sheenMask;
     [self.layer addSublayer:_sheen];
-    _turn = MRGVinylSecondsPerTurn();
+    _turn = turnSeconds();
+    _colorMode = -1;
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(settingsChanged) name:MRGSettingsChangedNotification object:nil];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(trackChanged) name:MRGPlayerTrackChangedNotification object:nil];
     return self;
@@ -236,6 +254,7 @@ static void logState(NSString *state) {
     [_link addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
     [self startSpin];
     [self slowTick];
+    [self fetchTempo];
 }
 
 - (void)startSpin {
@@ -271,7 +290,8 @@ static void logState(NSString *state) {
 }
 
 - (void)settingsChanged {
-    double turn = MRGVinylSecondsPerTurn();
+    [self applyColors:NO];
+    double turn = turnSeconds();
     if (fabs(turn - _turn) > 0.01) {
         _turn = turn;
         BOOL was = _spinning;
@@ -285,6 +305,83 @@ static void logState(NSString *state) {
     _shownImage = nil;   // the next tick reads the new cover
     _shownURL = nil;
     [self.tilt setNeedsLayout];
+    [self fetchTempo];
+}
+
+// Follow BPM: the song's tempo, then the spin changes to match (the chosen speed until it comes, or if it never does).
+- (void)fetchTempo {
+    if (!followBPM()) return;
+    NSString *uri = MRGNowPlaying()[@"uri"];
+    if (!uri.length || [uri isEqualToString:sTempoFor]) { [self settingsChanged]; return; }
+    sTempoFor = [uri copy];
+    sTempo = 0;
+    __weak typeof(self) weak = self;
+    MRGWebTempo(uri, ^(double bpm) {
+        if (![sTempoFor isEqualToString:uri]) return;
+        sTempo = bpm;
+        if (bpm > 0) MRGDJLog(@"vinyl: %.0f BPM, a turn every %.2fs", bpm, turnSeconds());
+        [weak settingsChanged];
+    });
+    [self settingsChanged];
+}
+
+// The record's colors: 0 black, 1 the cover's, 2 the accent, 3 clear red, 4 white.
+static UIColor *shade(UIColor *c, CGFloat brightness, CGFloat alpha) {
+    CGFloat h, sat, b, a;
+    if (![c getHue:&h saturation:&sat brightness:&b alpha:&a]) return [UIColor colorWithWhite:brightness alpha:alpha];
+    return [UIColor colorWithHue:h saturation:MIN(1, sat * 1.05) brightness:brightness alpha:alpha];
+}
+- (void)applyColors:(BOOL)imageChanged {
+    NSInteger mode = recordColor();
+    if (mode == _colorMode && !(mode == 1 && imageChanged)) return;
+    UIColor *tint = nil;
+    if (mode == 1) {
+        UIImage *img = _shownImage ?: MRGNowCoverImage(self.tilt);
+        if (img && img == _colorImage && mode == _colorMode) return;
+        _colorImage = img;
+        tint = img ? MRGNowVividColor(img) : nil;
+        if (!tint) mode = 0;
+    } else if (mode == 2) tint = MRGAccent();
+    _colorMode = recordColor();
+    [CATransaction begin];
+    [CATransaction setAnimationDuration:0.6];
+    UIColor *groove = [UIColor colorWithWhite:1 alpha:0.07], *ring = [UIColor colorWithWhite:0 alpha:0.85], *rim = [UIColor colorWithWhite:1 alpha:0.16];
+    NSArray *base;
+    UIColor *lit = [UIColor colorWithWhite:1 alpha:0.20], *soft = [UIColor colorWithWhite:1 alpha:0.09];
+    switch (mode) {
+        case 1: case 2:
+            base = @[(id)shade(tint, 0.42, 1).CGColor, (id)shade(tint, 0.20, 1).CGColor, (id)shade(tint, 0.08, 1).CGColor];
+            groove = [tint colorWithAlphaComponent:0.16];
+            rim = [tint colorWithAlphaComponent:0.45];
+            ring = shade(tint, 0.05, 0.8);
+            lit = [shade(tint, 1, 1) colorWithAlphaComponent:0.26];
+            break;
+        case 3:
+            base = @[(id)[UIColor colorWithRed:0.86 green:0.10 blue:0.16 alpha:0.86].CGColor, (id)[UIColor colorWithRed:0.62 green:0.04 blue:0.10 alpha:0.80].CGColor, (id)[UIColor colorWithRed:0.36 green:0.02 blue:0.06 alpha:0.86].CGColor];
+            groove = [UIColor colorWithWhite:1 alpha:0.10];
+            ring = [UIColor colorWithRed:0.25 green:0 blue:0.03 alpha:0.6];
+            rim = [UIColor colorWithWhite:1 alpha:0.30];
+            lit = [UIColor colorWithWhite:1 alpha:0.32];
+            break;
+        case 4:
+            base = @[(id)[UIColor colorWithWhite:0.97 alpha:1].CGColor, (id)[UIColor colorWithWhite:0.88 alpha:1].CGColor, (id)[UIColor colorWithWhite:0.74 alpha:1].CGColor];
+            groove = [UIColor colorWithWhite:0 alpha:0.08];
+            ring = [UIColor colorWithWhite:0 alpha:0.22];
+            rim = [UIColor colorWithWhite:0 alpha:0.14];
+            lit = [UIColor colorWithWhite:1 alpha:0.5];
+            soft = [UIColor colorWithWhite:1 alpha:0.25];
+            break;
+        default:
+            base = @[(id)[UIColor colorWithWhite:0.20 alpha:1].CGColor, (id)[UIColor colorWithWhite:0.09 alpha:1].CGColor, (id)[UIColor colorWithWhite:0.04 alpha:1].CGColor];
+            break;
+    }
+    _base.colors = base;
+    _grooves.strokeColor = groove.CGColor;
+    _rings.strokeColor = ring.CGColor;
+    _rim.strokeColor = rim.CGColor;
+    UIColor *clear = [lit colorWithAlphaComponent:0];
+    _sheen.colors = @[(id)clear.CGColor, (id)lit.CGColor, (id)clear.CGColor, (id)clear.CGColor, (id)soft.CGColor, (id)clear.CGColor, (id)clear.CGColor];
+    [CATransaction commit];
 }
 
 // The cover inside the tilt view: its biggest visible subview other than the record.
@@ -378,7 +475,8 @@ static UIView *coverIn(UIView *tilt) {
         if (img && img != _shownImage && img.CGImage) {
             _shownImage = img;
             _label.contents = (__bridge id)img.CGImage;
-        } else if (!img && !_label.contents) {
+            [self applyColors:YES];
+        } else if (_colorMode < 0) [self applyColors:NO]; else if (!img && !_label.contents) {
             NSDictionary *now = MRGNowPlaying();
             NSString *url = [now[@"image"] isKindOfClass:NSString.class] ? now[@"image"] : nil;
             if (url.length && ![url isEqualToString:_shownURL] && [url hasPrefix:@"https://"]) {
@@ -400,6 +498,100 @@ static UIView *coverIn(UIView *tilt) {
 - (void)frame:(CADisplayLink *)link { MRGVinylView *o = self.owner; if (o) [o frame:link]; else [link invalidate]; }
 @end
 
+#pragma mark - the sleeve's finish
+
+// On the cover itself (it moves with it): glossy is a light sweep and a lit edge; worn is ring wear where the record
+// pressed through, scuffed edges and a soft crease. Plain is nothing.
+@interface MRGVinylSleeve : UIView
+@property (nonatomic) NSInteger style;
+@property (nonatomic) CGFloat dir;
+@end
+@implementation MRGVinylSleeve {
+    CAGradientLayer *_gloss;
+    CAShapeLayer *_edge, *_wear, *_crease;
+    CGSize _built;
+    NSInteger _builtStyle;
+    CGFloat _builtDir;
+}
+- (instancetype)initWithFrame:(CGRect)frame {
+    if (!(self = [super initWithFrame:frame])) return nil;
+    self.userInteractionEnabled = NO;
+    self.clipsToBounds = YES;
+    self.layer.zPosition = 3;
+    self.accessibilityElementsHidden = YES;
+    _gloss = [CAGradientLayer layer];
+    _gloss.startPoint = CGPointMake(0, 0);
+    _gloss.endPoint = CGPointMake(1, 1);
+    _edge = [CAShapeLayer layer];
+    _edge.fillColor = nil;
+    _wear = [CAShapeLayer layer];
+    _wear.fillColor = nil;
+    _crease = [CAShapeLayer layer];
+    _crease.fillColor = nil;
+    for (CALayer *l in @[_gloss, _wear, _crease, _edge]) [self.layer addSublayer:l];
+    _builtStyle = -1;
+    return self;
+}
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    CGRect b = self.bounds;
+    if (CGSizeEqualToSize(b.size, _built) && _style == _builtStyle && _dir == _builtDir) return;
+    _built = b.size; _builtStyle = _style; _builtDir = _dir;
+    UIView *cover = self.superview;
+    CGFloat r = cover.layer.cornerRadius;
+    for (UIView *s in cover.subviews) if (s != self && s.layer.cornerRadius > r) r = s.layer.cornerRadius;
+    self.layer.cornerRadius = r;
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    for (CALayer *l in @[_gloss, _edge, _wear, _crease]) { l.frame = b; l.hidden = YES; }
+    CGFloat side = MIN(b.size.width, b.size.height);
+    if (_style == 1) {
+        _gloss.hidden = NO;
+        _gloss.colors = @[(id)[UIColor colorWithWhite:1 alpha:0.30].CGColor, (id)[UIColor colorWithWhite:1 alpha:0.06].CGColor, (id)[UIColor colorWithWhite:1 alpha:0].CGColor, (id)[UIColor colorWithWhite:1 alpha:0.0].CGColor, (id)[UIColor colorWithWhite:1 alpha:0.08].CGColor];
+        _gloss.locations = @[@0, @0.28, @0.42, @0.8, @1];
+        _edge.hidden = NO;
+        _edge.path = [UIBezierPath bezierPathWithRoundedRect:CGRectInset(b, 0.75, 0.75) cornerRadius:MAX(0, r - 0.75)].CGPath;
+        _edge.strokeColor = [UIColor colorWithWhite:1 alpha:0.35].CGColor;
+        _edge.lineWidth = 1.5;
+    } else if (_style == 2) {
+        _wear.hidden = NO;
+        CGPoint c = CGPointMake(CGRectGetMidX(b) + _dir * side * 0.03, CGRectGetMidY(b));
+        _wear.path = [UIBezierPath bezierPathWithArcCenter:c radius:side * 0.41 startAngle:0 endAngle:2 * M_PI clockwise:YES].CGPath;
+        _wear.strokeColor = [UIColor colorWithWhite:1 alpha:0.11].CGColor;
+        _wear.lineWidth = side * 0.035;
+        _wear.lineDashPattern = @[@(side * 0.22), @(side * 0.03), @(side * 0.12), @(side * 0.05)];
+        _edge.hidden = NO;
+        _edge.path = [UIBezierPath bezierPathWithRoundedRect:CGRectInset(b, 1.5, 1.5) cornerRadius:MAX(0, r - 1.5)].CGPath;
+        _edge.strokeColor = [UIColor colorWithWhite:0.95 alpha:0.18].CGColor;
+        _edge.lineWidth = 3;
+        _edge.lineDashPattern = @[@(side * 0.05), @(side * 0.012), @(side * 0.11), @(side * 0.02)];
+        _crease.hidden = NO;
+        UIBezierPath *k = [UIBezierPath bezierPath];
+        [k moveToPoint:CGPointMake(b.size.width * 0.68, 0)];
+        [k addQuadCurveToPoint:CGPointMake(b.size.width, b.size.height * 0.30) controlPoint:CGPointMake(b.size.width * 0.86, b.size.height * 0.12)];
+        _crease.path = k.CGPath;
+        _crease.strokeColor = [UIColor colorWithWhite:1 alpha:0.09].CGColor;
+        _crease.lineWidth = 1.2;
+    }
+    [CATransaction commit];
+}
+@end
+
+static void placeSleeve(UIView *tilt, UIView *cover, CGFloat dir) {
+    MRGVinylSleeve *sleeve = objc_getAssociatedObject(tilt, &kSleeveKey);
+    NSInteger style = sleeveStyle();
+    if (style <= 0 || !cover) { [sleeve removeFromSuperview]; return; }
+    if (!sleeve) { sleeve = [MRGVinylSleeve new]; objc_setAssociatedObject(tilt, &kSleeveKey, sleeve, OBJC_ASSOCIATION_RETAIN_NONATOMIC); }
+    sleeve.style = style;
+    sleeve.dir = dir;
+    if (sleeve.superview != cover) {
+        sleeve.frame = cover.bounds;
+        sleeve.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        [cover addSubview:sleeve];
+    } else if (!CGRectEqualToRect(sleeve.frame, cover.bounds)) sleeve.frame = cover.bounds;
+    [sleeve setNeedsLayout];
+}
+
 #pragma mark - placing it
 
 static void restore(UIView *tilt) {
@@ -415,6 +607,8 @@ static void restore(UIView *tilt) {
     for (UIView *v in unclipped.allObjects) v.clipsToBounds = YES;
     objc_setAssociatedObject(tilt, &kUnclippedKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     [vinyl removeFromSuperview];
+    [(UIView *)objc_getAssociatedObject(tilt, &kSleeveKey) removeFromSuperview];
+    objc_setAssociatedObject(tilt, &kSleeveKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(tilt, &kVinylKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(tilt, &kOursKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(tilt, &kClipKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -525,6 +719,7 @@ static void MRGVinylApply(UIView *tilt) {
         }];
         if (vinyl.superview != tilt) [tilt insertSubview:vinyl atIndex:0];
         else if (tilt.subviews.firstObject != vinyl) [tilt sendSubviewToBack:vinyl];
+        placeSleeve(tilt, coverIn(tilt), dir);
         if (fresh && tilt.window && CACurrentMediaTime() < sg_glideUntil) {
             vinyl.alpha = 0;
             [UIView animateWithDuration:0.35 animations:^{ vinyl.alpha = 1; }];
@@ -585,19 +780,24 @@ static void relayAll(void) {
 - (NSString *)addonID { return @"vinyl"; }
 - (NSString *)addonName { return @"Vinyl"; }
 - (NSString *)addonCategory { return @"Now Playing"; }
-- (NSString *)addonVersion { return @"1.1"; }
-- (NSString *)addonDescription { return @"Turns the Now Playing cover into a record sleeve. The cover slides to one side and a vinyl record peeks out from behind it. The record spins while music plays, stops when you pause, and its label shows the album art."; }
+- (NSString *)addonVersion { return @"1.2"; }
+- (NSString *)addonDescription { return @"The Now Playing cover becomes a sleeve with a spinning record peeking out."; }
 - (NSArray<MRGAddonSetting *> *)addonSettings {
     MRGAddonSetting *speed = [MRGAddonSetting picker:@"mirage.addon.vinyl.turn" title:@"Spin speed" options:@[@"Slow", @"33⅓ RPM", @"45 RPM"] values:@[@4.0, @1.8, @1.33] fallback:@1.8];
     MRGAddonSetting *side = [MRGAddonSetting picker:@"mirage.addon.vinyl.left" title:@"Record side" options:@[@"Left", @"Right"] values:@[@YES, @NO] fallback:@NO];
-    side.footer = @"The record spins while a song plays and stops when you pause. If Spotify changes its player and the cover can't be found, Now Playing simply stays as it is.";
-    return @[speed, side];
+    MRGAddonSetting *color = [MRGAddonSetting picker:@"mirage.addon.vinyl.color" title:@"Record color" options:@[@"Black", @"From the cover", @"Accent", @"Clear red", @"White"] values:@[@0, @1, @2, @3, @4] fallback:@0];
+    MRGAddonSetting *sleeve = [MRGAddonSetting picker:@"mirage.addon.vinyl.sleeve" title:@"Sleeve" options:@[@"Plain", @"Glossy", @"Worn"] values:@[@0, @1, @2] fallback:@0];
+    MRGAddonSetting *bpm = [MRGAddonSetting toggle:@"mirage.addon.vinyl.bpm" title:@"Spin to the song's BPM" fallback:NO];
+    bpm.footer = @"Uses the speed above when Spotify doesn't give the BPM.";
+    return @[speed, bpm, side, color, sleeve];
 }
 - (void)addonDidEnable {}
 - (void)addonDidDisable {}
 - (NSString *)addonSummary {
     double s = MRGVinylSecondsPerTurn();
-    return [NSString stringWithFormat:@"%@ · %@", s > 2.5 ? @"Slow" : s > 1.5 ? @"33⅓ RPM" : @"45 RPM", MRGVinylOnLeft() ? @"Left" : @"Right"];
+    NSArray *colors = @[@"Black", @"Cover", @"Accent", @"Red", @"White"];
+    NSInteger c = MIN(4, MAX(0, recordColor()));
+    return [NSString stringWithFormat:@"%@ · %@ · %@", followBPM() ? @"BPM" : s > 2.5 ? @"Slow" : s > 1.5 ? @"33⅓ RPM" : @"45 RPM", colors[c], MRGVinylOnLeft() ? @"Left" : @"Right"];
 }
 @end
 
@@ -607,7 +807,7 @@ static void relayAll(void) {
         %init(MRGVinylHooks);
         [NSNotificationCenter.defaultCenter addObserverForName:MRGSettingsChangedNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
             static NSString *last;
-            NSString *now = [NSString stringWithFormat:@"%d%d", MRGAddonInstalled(@"vinyl"), MRGVinylOnLeft()];
+            NSString *now = [NSString stringWithFormat:@"%d%d%ld", MRGAddonInstalled(@"vinyl"), MRGVinylOnLeft(), (long)sleeveStyle()];
             if ([now isEqualToString:last]) return;   // another setting: nothing to move
             last = now;
             sg_glideUntil = CACurrentMediaTime() + 0.6;
