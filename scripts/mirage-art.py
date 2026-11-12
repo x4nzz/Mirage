@@ -785,6 +785,261 @@ COVERS.update({"radio": cover_radio, "focus": cover_focus, "on-repeat": cover_on
                "cover-ring": cover_ring, "lyrics-backdrop": cover_lyrics_backdrop, "queue-tools": cover_queue_tools, "up-next": cover_up_next})
 
 
+# ------------------------------------------------------------------ 0.6.8 covers: each shows what the add-on does
+
+WHITE = np.ones(3, np.float32)
+
+
+def bar(img, x, y, w, h, op=1.0, color=None, glow=None):
+    m = mask(W, H, rrect(x, y, w, h, h / 2))
+    if glow:
+        img = over(img, hexc(glow), blur(m, h * 0.9) * 0.6)
+    return over(img, WHITE if color is None else hexc(color), m * op)
+
+
+def phone(img, cx, cy, ph, seed):
+    """A black glass phone, front on: returns the image and its screen rect (x, y, w, h)."""
+    pw = ph * 0.49
+    x, y = cx - pw / 2, cy - ph / 2
+    m = mask(W, H, rrect(x, y, pw, ph, pw * 0.16))
+    img = shadow(img, m, 30, 0.8, dy=20)
+    img = over(img, hexc("#0b0a10"), m)
+    img = over(img, WHITE, inner_edge(m, 2.0, 0.35))
+    inset = pw * 0.035
+    sx, sy, sw, sh = x + inset, y + inset, pw - 2 * inset, ph - 2 * inset
+    sm = mask(W, H, rrect(sx, sy, sw, sh, pw * 0.13))
+    img = over(img, hexc("#050408"), sm)
+    img = over(img, WHITE, gloss_sheen(m, 0.05, angle=-65, width=0.35))
+    return img, (sx, sy, sw, sh)
+
+
+def controls(img, cx, y, span, r, op=1.0):
+    for k, rad in ((-1, 0.62), (0, 1.0), (1, 0.62)):
+        img = sphere(img, cx + k * span, y, r * rad, "#f4f0ff" if k == 0 else "#b8a8e8")
+    return img
+
+
+def cover_radio():
+    p = PAL["radio"]
+    img = ground(p, 21)
+    # a glossy retro radio on the left...
+    rx, ry, rw, rh = W * 0.12, H * 0.34, W * 0.40, H * 0.46
+    img, _ = tube(img, [(rx + rw * 0.78, ry + 4), (rx + rw * 0.95, ry - H * 0.22)], H * 0.018, "#e8dcff", "#ffffff", shadow_op=0.3)
+    img = sphere(img, rx + rw * 0.95, ry - H * 0.22, H * 0.022, "#ffb86b", glow="#ffb86b")
+    body = mask(W, H, rrect(rx, ry, rw, rh, rh * 0.16))
+    img = shadow(img, body, 26, 0.7, dy=16)
+    xg, yg = grid(W, H)
+    shade = vertical(H, W, hexc("#ff9a6b"), hexc("#b4492e"))
+    img = over(img, shade, body)
+    img = over(img, WHITE, gloss_sheen(body, 0.20, angle=-70, width=0.35))
+    img = over(img, WHITE, inner_edge(body, 2.5, 0.45))
+    # speaker grille
+    for i in range(5):
+        for j in range(4):
+            img = over(img, hexc("#5a1f12"), mask(W, H, ellipse(rx + rw * (0.12 + i * 0.075), ry + rh * (0.30 + j * 0.15), rh * 0.035)) * 0.9)
+    # the dial window and its needle
+    dx, dy, dw, dh = rx + rw * 0.55, ry + rh * 0.22, rw * 0.36, rh * 0.30
+    dm = mask(W, H, rrect(dx, dy, dw, dh, dh * 0.25))
+    img = frosted(img, dm, "#fff3e6", amount=0.45, frost=6)
+    for i in range(9):
+        img = over(img, hexc("#7a3a2a"), mask(W, H, rrect(dx + dw * (0.08 + i * 0.105), dy + dh * 0.25, 2.5, dh * (0.25 if i % 2 else 0.4), 1)) * 0.8)
+    img = over(img, hexc("#e0457b"), mask(W, H, rrect(dx + dw * 0.62, dy + dh * 0.12, 4, dh * 0.76, 2)))
+    img = sphere(img, dx + dw * 0.25, ry + rh * 0.76, rh * 0.09, "#ffe2c8")
+    img = sphere(img, dx + dw * 0.75, ry + rh * 0.76, rh * 0.09, "#ffe2c8")
+    # ...feeding a queue that never runs dry: three songs dropping in on the right, the next one arriving
+    qx, qw, qh = W * 0.60, W * 0.30, H * 0.13
+    for i, yy in enumerate((0.24, 0.43, 0.62)):
+        y = H * yy
+        arriving = i == 2
+        img, _ = glass_card(img, qx + (W * 0.03 if arriving else 0), y, qw, qh, qh * 0.3, amount=0.22 if arriving else 0.12, frost=12, shadow_op=0.4)
+        sz = qh * 0.70
+        img, _ = sleeve(img, qx + (W * 0.03 if arriving else 0) + qh * 0.16, y + (qh - sz) / 2, sz, p["art"], 70 + i, shadow_op=0.3, radius=sz * 0.12)
+        img = bar(img, qx + (W * 0.03 if arriving else 0) + qh * 1.1, y + qh * 0.36, qw * 0.45, qh * 0.14, 0.85)
+        img = bar(img, qx + (W * 0.03 if arriving else 0) + qh * 1.1, y + qh * 0.60, qw * 0.28, qh * 0.10, 0.4)
+    img = sparkle(img, qx + qw + W * 0.03, H * 0.62, H * 0.05, "#ffe2c8")
+    img = arrowhead(img, (W * 0.565, H * 0.57), (1, 0), H * 0.07, "#ffb86b", "#fff6ea")
+    return img
+
+
+def cover_focus():
+    p = PAL["focus"]
+    img = ground(p, 22)
+    img, (sx, sy, sw, sh) = phone(img, W * 0.5, H * 0.5, H * 0.90, 22)
+    cx = sx + sw / 2
+    # what Focus hides, ghosted: the header, title and like, the scrubber, shuffle and repeat, the cards below
+    img = bar(img, sx + sw * 0.30, sy + sh * 0.05, sw * 0.40, sh * 0.018, 0.10)
+    s = sw * 0.78
+    img = bar(img, sx + sw * 0.11, sy + sh * 0.63, sw * 0.50, sh * 0.026, 0.10)
+    img = bar(img, sx + sw * 0.11, sy + sh * 0.68, sw * 0.32, sh * 0.020, 0.07)
+    img = bar(img, sx + sw * 0.11, sy + sh * 0.74, sw * 0.78, sh * 0.010, 0.08)
+    img = bar(img, sx + sw * 0.11, sy + sh * 0.92, sw * 0.78, sh * 0.05, 0.05)
+    # what stays: the cover and the three controls, on true black
+    img, _ = sleeve(img, cx - s / 2, sy + sh * 0.14, s, p["art"], 23, shadow_op=0.5)
+    img = controls(img, cx, sy + sh * 0.83, sw * 0.27, sh * 0.045)
+    # the viewfinder corners of the Focus button, in the accent, around the cover
+    L, t = s * 0.16, H * 0.012
+    x0, y0, x1, y1 = cx - s / 2 - 10, sy + sh * 0.14 - 10, cx + s / 2 + 10, sy + sh * 0.14 + s + 10
+    for (ax, ay, hx, vy) in ((x0, y0, 1, 1), (x1, y0, -1, 1), (x0, y1, 1, -1), (x1, y1, -1, -1)):
+        img, _ = tube(img, [(ax + hx * L, ay), (ax, ay), (ax, ay + vy * L)], t, "#b89cff", "#f3eeff", shadow_op=0.3)
+    return img
+
+
+def cover_on_repeat():
+    p = PAL["on-repeat"]
+    img = ground(p, 24)
+    # a sleeve inside a glossy repeat loop...
+    cx, cy, r = W * 0.30, H * 0.5, H * 0.27
+    s = H * 0.30
+    img, _ = sleeve(img, cx - s / 2, cy - s / 2, s, p["art"], 25, shadow_op=0.6)
+    img, _ = tube(img, arc_pts(cx, cy, r, -60, 235, 120), H * 0.045, "#ff9ad5", "#fff0fa", shadow_op=0.45)
+    tip = (cx + r * math.cos(math.radians(-60)), cy + r * math.sin(math.radians(-60)))
+    img = arrowhead(img, tip, (math.cos(math.radians(30)), math.sin(math.radians(30))), H * 0.11, "#ff9ad5", "#fff0fa")
+    # ...and the list it makes: your most played lately, each with its play count as a bar
+    x, y, w, h = W * 0.52, H * 0.16, W * 0.38, H * 0.68
+    img, _ = glass_card(img, x, y, w, h, 26, frost=22)
+    plays = (1.0, 0.78, 0.6, 0.45)
+    for i, f in enumerate(plays):
+        ry = y + h * (0.10 + i * 0.215)
+        sz = h * 0.15
+        img, _ = sleeve(img, x + w * 0.06, ry, sz, [p["art"], ("#c4b5fd", "#5b21b6", "#ff9ad5", "#ffb35c")][i % 2], 60 + i, shadow_op=0.3, radius=sz * 0.12)
+        img = bar(img, x + w * 0.06 + sz * 1.25, ry + sz * 0.12, w * 0.38, sz * 0.18, 0.85)
+        img = bar(img, x + w * 0.06 + sz * 1.25, ry + sz * 0.58, (w * 0.60) * f, sz * 0.22, 0.95, color="#ff9ad5", glow="#ff9ad5" if i == 0 else None)
+    return img
+
+
+def cover_more_like_this():
+    p = PAL["more-like-this"]
+    img = ground(p, 26)
+    # one song in the middle, glowing threads out to the songs that sound like it
+    cx, cy, s = W * 0.5, H * 0.52, H * 0.36
+    around = [(W * 0.20, H * 0.26, 9), (W * 0.80, H * 0.26, -8), (W * 0.18, H * 0.76, -6), (W * 0.82, H * 0.76, 7)]
+    pals = [("#5b4dd6", "#2b3fa8", "#f0abfc", "#7dd3fc"), ("#7dd3fc", "#3d2b78", "#c084fc", "#8fe3ff"),
+            ("#c084fc", "#1f3f7a", "#8fe3ff", "#5b4dd6"), ("#8fe3ff", "#5a2a7a", "#f0abfc", "#3d2b78")]
+    for (ax, ay, _), _p in zip(around, pals):
+        line = mask(W, H, stroke([(cx, cy), (ax, ay)], H * 0.010))
+        img = over(img, hexc("#8fe3ff"), blur(line, 6) * 0.6)
+        img = over(img, WHITE, line * 0.55)
+    small = H * 0.22
+    for i, ((ax, ay, ang), _p) in enumerate(zip(around, pals)):
+        img, _ = sleeve(img, ax - small / 2, ay - small / 2, small, _p, 27 + i, angle=ang, shadow_op=0.5)
+    img = over(img, hexc("#8fe3ff"), blur(mask(W, H, rrect(cx - s / 2, cy - s / 2, s, s, s * 0.06)), 28) * 0.55)
+    img, _ = sleeve(img, cx - s / 2, cy - s / 2, s, p["art"], 31)
+    img = sparkle(img, cx + s * 0.55, cy - s * 0.58, H * 0.06, "#e0f7ff")
+    return img
+
+
+def cover_ring():
+    p = PAL["cover-ring"]
+    img = ground(p, 30)
+    img, (sx, sy, sw, sh) = phone(img, W * 0.5, H * 0.5, H * 0.90, 30)
+    cx = sx + sw / 2
+    s = sw * 0.66
+    cy = sy + sh * 0.40
+    img, _ = sleeve(img, cx - s / 2, cy - s / 2, s, p["art"], 31, radius=s * 0.08)
+    # the song's progress drawn as a ring hugging the cover, about two thirds round, its head glowing
+    r = s * 0.62
+    track = mask(W, H, stroke(arc_pts(cx, cy, r, 0, 360, 160), H * 0.016))
+    img = over(img, WHITE, track * 0.14)
+    img, _ = tube(img, arc_pts(cx, cy, r, -90, 150, 120), H * 0.022, "#a3f0c0", "#f2fff7", shadow_op=0.35)
+    hx, hy = cx + r * math.cos(math.radians(150)), cy + r * math.sin(math.radians(150))
+    img = sphere(img, hx, hy, H * 0.022, "#f2fff7", glow="#5eead4")
+    img = bar(img, sx + sw * 0.12, sy + sh * 0.72, sw * 0.50, sh * 0.024, 0.85)
+    img = bar(img, sx + sw * 0.12, sy + sh * 0.765, sw * 0.32, sh * 0.018, 0.4)
+    img = controls(img, cx, sy + sh * 0.88, sw * 0.27, sh * 0.040)
+    return img
+
+
+def cover_lyrics_backdrop():
+    p = PAL["lyrics-backdrop"]
+    img = ground(p, 32)
+    img, (sx, sy, sw, sh) = phone(img, W * 0.5, H * 0.5, H * 0.92, 32)
+    img = over(img, hexc("#2a0f3a"), mask(W, H, rrect(sx, sy, sw, sh, sw * 0.13)) * 0.6)
+    # big synced lines where the cover was: the one being sung bright, the ones around it fading
+    left = sx + sw * 0.10
+    lines = [(0.12, 0.62, 0.22, 0.040), (0.21, 0.74, 0.40, 0.046), (0.32, 0.80, 1.0, 0.058), (0.43, 0.70, 0.45, 0.046), (0.53, 0.52, 0.22, 0.040)]
+    for ly, lw, op, th in lines:
+        y = sy + sh * ly
+        img = bar(img, left, y, sw * lw, sh * th, op, glow="#ffd1f0" if op == 1.0 else None)
+    # the cover, shrunk beside the title, the title and artist pushed right
+    tsz = sh * 0.085
+    ty = sy + sh * 0.665
+    img, _ = sleeve(img, left, ty, tsz, p["art"], 33, shadow_op=0.5, radius=tsz * 0.14)
+    img = bar(img, left + tsz + sw * 0.05, ty + tsz * 0.14, sw * 0.42, tsz * 0.26, 0.9)
+    img = bar(img, left + tsz + sw * 0.05, ty + tsz * 0.58, sw * 0.26, tsz * 0.20, 0.45)
+    img = bar(img, left, sy + sh * 0.79, sw * 0.80, sh * 0.010, 0.35)
+    img = bar(img, left, sy + sh * 0.79, sw * 0.42, sh * 0.010, 0.95)
+    img = controls(img, sx + sw / 2, sy + sh * 0.88, sw * 0.27, sh * 0.038)
+    return img
+
+
+def chip(img, cx, cy, r, color, glyph):
+    img = sphere(img, cx, cy, r, color)
+    g = glyph(cx, cy, r)
+    img = over(img, hexc("#1b1640"), g * 0.85)
+    return img
+
+
+def cover_queue_tools():
+    p = PAL["queue-tools"]
+    img = ground(p, 34)
+    rw, rh = W * 0.42, H * 0.12
+    x0 = W * 0.5 - rw / 2
+    # the queue's tools as glossy buttons over it: shuffle the queue, take out repeats, clear it
+    cy, r = H * 0.14, H * 0.065
+    def shuffle_g(cx, cy, r):
+        a = mask(W, H, stroke([(cx - r * 0.5, cy + r * 0.3), (cx + r * 0.5, cy - r * 0.3)], r * 0.16))
+        b = mask(W, H, stroke([(cx - r * 0.5, cy - r * 0.3), (cx + r * 0.5, cy + r * 0.3)], r * 0.16))
+        return np.clip(a + b, 0, 1)
+    def dedupe_g(cx, cy, r):
+        return np.clip(mask(W, H, rrect(cx - r * 0.45, cy - r * 0.25, r * 0.9, r * 0.16, r * 0.08)) + mask(W, H, rrect(cx - r * 0.45, cy + r * 0.09, r * 0.9, r * 0.16, r * 0.08)), 0, 1)
+    def clear_g(cx, cy, r):
+        a = mask(W, H, stroke([(cx - r * 0.35, cy - r * 0.35), (cx + r * 0.35, cy + r * 0.35)], r * 0.17))
+        b = mask(W, H, stroke([(cx - r * 0.35, cy + r * 0.35), (cx + r * 0.35, cy - r * 0.35)], r * 0.17))
+        return np.clip(a + b, 0, 1)
+    for k, (col, g) in enumerate((("#93c5fd", shuffle_g), ("#c4b5fd", dedupe_g), ("#fda4af", clear_g))):
+        img = chip(img, W * 0.5 + (k - 1) * r * 2.8, cy, r, col, g)
+    for i, yy in enumerate((0.36, 0.52, 0.68, 0.84)):
+        lift = i == 1
+        x = x0 + (W * 0.05 if lift else 0)
+        y = H * yy - rh / 2 - (H * 0.02 if lift else 0)
+        img, m = glass_card(img, x, y, rw, rh, rh * 0.35, tint="#dbeafe" if lift else "#ffffff", amount=0.22 if lift else 0.12,
+                            frost=12, shadow_op=0.7 if lift else 0.35)
+        s = rh * 0.70
+        img, _ = sleeve(img, x + rh * 0.18, y + (rh - s) / 2, s, p["art"], 35 + i, shadow_op=0.3, radius=s * 0.12)
+        img = bar(img, x + rh * 1.15, y + rh * 0.40, rw * (0.50 if i % 2 else 0.38), rh * 0.18, 0.9 if lift else 0.5)
+        for k in range(3):
+            img = bar(img, x + rw - rh * 0.55, y + rh * (0.32 + 0.14 * k), rh * 0.30, rh * 0.06, 0.55)
+    return img
+
+
+def cover_up_next():
+    p = PAL["up-next"]
+    img = ground(p, 38)
+    img, (sx, sy, sw, sh) = phone(img, W * 0.5, H * 0.5, H * 0.92, 38)
+    cx = sx + sw / 2
+    s = sw * 0.80
+    top = sy + sh * 0.12
+    img, _ = sleeve(img, cx - s / 2, top, s, p["art"], 39)
+    # near the end of a song, the next one slides up over the bottom of the cover
+    cw, ch = sw * 0.86, sh * 0.11
+    x, y = cx - cw / 2, top + s - ch * 0.75
+    img, _ = glass_card(img, x, y, cw, ch, ch * 0.3, amount=0.30, frost=16, shadow_op=0.6)
+    tsz = ch * 0.70
+    img, _ = sleeve(img, x + ch * 0.15, y + (ch - tsz) / 2, tsz, ("#ddd6fe", "#5b21b6", "#fda4af", "#c4b5fd"), 40, shadow_op=0.3, radius=tsz * 0.14)
+    img = bar(img, x + ch * 1.05, y + ch * 0.22, cw * 0.22, ch * 0.13, 0.55)
+    img = bar(img, x + ch * 1.05, y + ch * 0.48, cw * 0.46, ch * 0.18, 0.95)
+    img = arrowhead(img, (x + cw - ch * 0.35, y + ch * 0.5), (0, -1), ch * 0.45, "#fbcfe8", "#ffffff")
+    img = bar(img, sx + sw * 0.10, sy + sh * 0.72, sw * 0.50, sh * 0.024, 0.85)
+    img = bar(img, sx + sw * 0.10, sy + sh * 0.79, sw * 0.80, sh * 0.010, 0.35)
+    img = bar(img, sx + sw * 0.10, sy + sh * 0.79, sw * 0.70, sh * 0.010, 0.95)
+    img = controls(img, cx, sy + sh * 0.88, sw * 0.27, sh * 0.038)
+    return img
+
+
+COVERS.update({"radio": cover_radio, "focus": cover_focus, "on-repeat": cover_on_repeat, "more-like-this": cover_more_like_this,
+               "cover-ring": cover_ring, "lyrics-backdrop": cover_lyrics_backdrop, "queue-tools": cover_queue_tools, "up-next": cover_up_next})
+
+
 def glyph_066(addon, n):
     u = n / 12
     if addon == "radio":
