@@ -2,6 +2,16 @@
 
 Mirage DJ, added in 0.2.0, plans a set and picks about 15 tracks that suit what you've been listening to and what you ask for, and plays them in Spotify's own player. Between tracks it says a short line, the way a radio DJ would, in the persona you choose. Since 0.3.0 you can also chat with it: ask about your listening, have it play or queue songs, and create or change playlists. The words come from an AI provider you choose, using your own API key.
 
+## What's new in 0.6.8 (the ultimate DJ)
+
+- One pill on Now Playing (header title slot): segment, next song, Switch it up. Never doubled, never over the cover.
+- Talks between songs, over the end of one into the next, with the music lowered (Vibe → *Talk between songs*).
+- Switch it up steps through On repeat, Throwbacks, New for you and a new direction, and lines it up after the song on.
+  History segments work without an AI key; their lines are only counts and years from your history.
+- Voices: ElevenLabs first with a key; the free voice retries (3 tries, timeouts) and is fetched ahead; iPhone voice last.
+- Ducking is held per speaker with a watchdog, so the music always comes back.
+- The mic starts off the main thread (no freeze) and is warmed up when the sheet opens.
+
 ## What's new in 0.5.4 (Vinyl really bigger)
 
 - **Vinyl is much bigger.** 0.5.3 still kept the cover inside Spotify's art size with a 30% peek, so on a phone it

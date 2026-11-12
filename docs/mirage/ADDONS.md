@@ -109,6 +109,34 @@ Every theme in that file is checked (only the known keys, colors as `#RRGGBB`, n
 doesn't pass is dropped. **Download theme list** turns the fetch off. Off, or a fetch that fails, shows the
 bundled catalog and says so.
 
+## 0.6.8: the ultimate DJ, covers that stay put, add-ons that work
+
+- **AI DJ.**
+  - One DJ pill on Now Playing, in the header's title slot: DJ badge, the segment, what's next, and a ⇄ Switch it up
+    button. Only ever one, and it can't cover the cover, the title or the queue buttons.
+  - **Talks between songs**: it comes in over the end of a song and talks into the next, the music lowered under it.
+    Settings → AI DJ → Vibe → *Talk between songs* (on).
+  - **Switch it up** goes through segments: On repeat and Throwbacks (your own history; every line is a play count or
+    a year from it), New for you (artists close to yours you've never played), then a new direction. It never cuts
+    off the song on.
+  - Voice: ElevenLabs first when you have a key; the free voice retries with timeouts and fetches the next line early;
+    the iPhone voice only as a last resort, the best one installed. The music always comes back up (a watchdog).
+  - The mic no longer freezes the app for a second.
+- **Vinyl.** The cover keeps its round corners. *From the cover* reads 9.1.90's cover (drawn in layer contents) and
+  picks a better color.
+- **Covers that vanished** on songs with a Canvas clip: the Now Playing background now steps aside for the clip.
+- **Lyrics backdrop 2.0.** The cover shrinks beside the title, the title and artist slide right, and big synced lines
+  fill its space. Options: *The cover* (Beside the title / Dimmed behind), *Text size*, *Lines* (Left / Centered),
+  *Line being sung* (White / Cover color). It waits for timed lines and keeps asking Vitrine until they come.
+- **Pop-up lyrics.** Tapping it opens the player on its lyrics view. *Tapping it opens*: The lyrics / The player.
+- **Radio** no longer counts the queue settling as skips (it sank an artist in 3 s and requeued every half second),
+  and waits while a DJ set has the queue.
+- **Cover ring**: *Show the rest of the ring*, *Glow*. **Focus mode**: *Keep the title and artist*, *Keep the
+  scrubber*. **Up Next**: *Row shows* Always / Near the end (last 30 s).
+- **Shop art**: the new add-ons' covers show what each does (a radio feeding the queue, the lyrics layout, the ring on
+  a player, …).
+- Installing and removing an add-on is in the diagnostics breadcrumbs.
+
 ## 0.6.7: a DJ that keeps your song, voice requests, working options, battery lines
 
 - **AI DJ, Start.** The song you're on keeps playing. The set is queued after it and the intro is spoken over it. The
