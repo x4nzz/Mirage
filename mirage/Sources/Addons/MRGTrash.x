@@ -3,6 +3,7 @@
 #import "MRGAddons.h"
 #import "MRGPlayer.h"
 #import "MRGDJLog.h"
+#import "MRGPrefs.h"
 #import <objc/runtime.h>
 
 static NSString *const kAddon = @"trash";
@@ -52,27 +53,68 @@ static void trashTrack(NSDictionary *track) {
     if ([MRGNowPlaying()[@"uri"] isEqualToString:track[@"uri"]]) MRGPlayerControl(@"next", nil);
 }
 
+static NSHashTable<UIView *> *sHosts;
+
+// Spotify's header row on Now Playing: ⌄  title  ⋯ (a horizontal stack with at least three views).
+static UIStackView *headerRow(UIView *host) {
+    NSMutableArray *stack = [NSMutableArray arrayWithObject:host];
+    NSUInteger seen = 0;
+    while (stack.count && seen < 400) {
+        UIView *v = stack.firstObject; [stack removeObjectAtIndex:0]; seen++;
+        if ([v isKindOfClass:UIStackView.class] && ((UIStackView *)v).axis == UILayoutConstraintAxisHorizontal && ((UIStackView *)v).arrangedSubviews.count >= 3) return (UIStackView *)v;
+        [stack addObjectsFromArray:v.subviews];
+    }
+    return nil;
+}
+
+// 0.6.0 put the button at a fixed spot (28, 26) in the header unit, right on top of Spotify's ⌄ minimize button
+// (48×48 at x 12), so it hid the chevron and took its taps. It now sits beside the ⌄, outside the stack's arranged
+// views (so Spotify's own spacing stays), the title capped so it never runs under it.
 static void placeButton(UIView *root) {
     if (!root) return;
+    if (!sHosts) sHosts = [NSHashTable weakObjectsHashTable];
+    [sHosts addObject:root];
     UIButton *button = objc_getAssociatedObject(root, &kButtonKey);
     BOOL show = MRGAddonInstalled(kAddon) && MRGNowPlaying()[@"uri"] != nil;
     if (!show) { button.hidden = YES; return; }
+    UIStackView *row = headerRow(root);
+    UIView *minimize = row.arrangedSubviews.firstObject;
+    if (!row || !minimize) { button.hidden = YES; return; }
     if (!button) {
         button = [UIButton buttonWithType:UIButtonTypeSystem];
-        [button setImage:[UIImage systemImageNamed:@"trash"] forState:UIControlStateNormal];
+        UIImageSymbolConfiguration *conf = [UIImageSymbolConfiguration configurationWithPointSize:16 weight:UIImageSymbolWeightSemibold];
+        [button setImage:[UIImage systemImageNamed:@"trash" withConfiguration:conf] forState:UIControlStateNormal];
         button.tintColor = UIColor.whiteColor;
+        button.backgroundColor = [UIColor colorWithWhite:1 alpha:0.12];
         button.accessibilityLabel = @"Move to trash";
-        button.frame = CGRectMake(0, 0, 36, 36);
+        button.translatesAutoresizingMaskIntoConstraints = NO;
         [button addAction:[UIAction actionWithHandler:^(__kindof UIAction *action) {
             NSDictionary *now = MRGNowPlaying();
-            if (now) trashTrack(now);
+            if (!now) return;
+            [[UIImpactFeedbackGenerator new] impactOccurred];
+            trashTrack(now);
         }] forControlEvents:UIControlEventTouchUpInside];
         objc_setAssociatedObject(root, &kButtonKey, button, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
-    if (button.superview != root) [root addSubview:button];
-    button.hidden = NO;
-    CGFloat top = root.safeAreaInsets.top + 8;
-    button.center = CGPointMake(28, top + 18);
+    if (button.superview != row) {
+        [button removeFromSuperview];
+        [row addSubview:button];
+        CGFloat side = 36;
+        button.layer.cornerRadius = side / 2;
+        [NSLayoutConstraint activateConstraints:@[
+            [button.leadingAnchor constraintEqualToAnchor:minimize.trailingAnchor constant:6],
+            [button.centerYAnchor constraintEqualToAnchor:minimize.centerYAnchor],
+            [button.widthAnchor constraintEqualToConstant:side],
+            [button.heightAnchor constraintEqualToConstant:side],
+        ]];
+        if (row.arrangedSubviews.count >= 3) {
+            UIView *title = row.arrangedSubviews[row.arrangedSubviews.count / 2];
+            NSLayoutConstraint *cap = [title.widthAnchor constraintLessThanOrEqualToAnchor:row.widthAnchor constant:-2 * (48 + 6 + side + 8)];
+            cap.priority = UILayoutPriorityRequired - 1;
+            cap.active = YES;
+        }
+    }
+    button.hidden = minimize.hidden || minimize.alpha < 0.01;
 }
 
 %group MRGTrashPlayer
@@ -80,17 +122,13 @@ static void placeButton(UIView *root) {
 - (void)viewDidLayoutSubviews {
     %orig;
     UIView *view = ((UIViewController *)self).viewIfLoaded;
-    if (view) placeButton(view);
+    @try { if (view) placeButton(view); } @catch (NSException *e) { MRGDJLog(@"trash: button threw %@", e.reason); }
 }
 %end
 %end
 
-%group MRGTrashMenu
-%hook _TtC24ContextMenu_InternalImpl25ContextMenuViewController
-- (void)viewDidAppear:(BOOL)animated {
-    %orig;
+static void addMenuRow(UIViewController *menu) {
     if (!MRGAddonInstalled(kAddon)) return;
-    UIViewController *menu = (UIViewController *)self;
     if (objc_getAssociatedObject(menu, &kButtonKey)) return;
     NSString *uri = uriInObject(menu, 0);
     NSDictionary *now = MRGNowPlaying();
@@ -120,17 +158,33 @@ static void placeButton(UIView *root) {
     NSString *kept = [uri copy];
     [button addAction:[UIAction actionWithHandler:^(__kindof UIAction *action) {
         if (MRGTrashContains(kept)) MRGTrashRestore(kept);
-        else trashTrack(@{@"uri": kept, @"title": now[@"title"] ?: @"", @"artist": now[@"artist"] ?: @""});
+        // The playing song's name only when the menu is about the playing song; any other track gets its name
+        // looked up by the trash list (0.6.0 saved the playing song's name for whichever track was trashed).
+        else if ([kept isEqualToString:now[@"uri"]]) trashTrack(@{@"uri": kept, @"title": now[@"title"] ?: @"", @"artist": now[@"artist"] ?: @""});
+        else trashTrack(@{@"uri": kept});
         [menu dismissViewControllerAnimated:YES completion:nil];
     }] forControlEvents:UIControlEventTouchUpInside];
     if (!table.tableHeaderView || table.tableHeaderView.bounds.size.height < 1) table.tableHeaderView = button;
     else table.tableFooterView = button;
     objc_setAssociatedObject(menu, &kButtonKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
+
+%group MRGTrashMenu
+%hook _TtC24ContextMenu_InternalImpl25ContextMenuViewController
+- (void)viewDidAppear:(BOOL)animated {
+    %orig;
+    @try { addMenuRow((UIViewController *)self); } @catch (NSException *e) { MRGDJLog(@"trash: menu row threw %@", e.reason); }
+}
 %end
 %end
 
 %ctor {
-    if (NSClassFromString(@"_TtC20NowPlaying_ModesImpl18HeaderElementsUnit")) %init(MRGTrashPlayer);
+    if (NSClassFromString(@"_TtC20NowPlaying_ModesImpl18HeaderElementsUnit")) {
+        %init(MRGTrashPlayer);
+        // Turning Trash on or off shows or hides the button now, not on the next layout.
+        [NSNotificationCenter.defaultCenter addObserverForName:MRGSettingsChangedNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
+            @try { for (UIView *v in sHosts.allObjects) placeButton(v); } @catch (NSException *e) {}
+        }];
+    }
     if (NSClassFromString(@"_TtC24ContextMenu_InternalImpl25ContextMenuViewController")) %init(MRGTrashMenu);
 }

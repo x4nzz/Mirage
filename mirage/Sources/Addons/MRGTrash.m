@@ -35,16 +35,49 @@ BOOL MRGTrashContains(NSString *uri) {
     return NO;
 }
 
+// A track trashed from a menu that isn't about the playing song: its name and artist from the Web API (GET /v1/tracks),
+// with the token of Spotify's own requests. Left as "Track" when that isn't possible.
+static void fillName(NSString *uri) {
+    NSString *tid = [uri hasPrefix:@"spotify:track:"] ? [uri substringFromIndex:@"spotify:track:".length] : nil;
+    NSString *auth = MRGSpotifyHeaders()[@"authorization"];
+    if (!tid.length || !auth.length) return;
+    NSMutableURLRequest *r = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:[@"https://api.spotify.com/v1/tracks/" stringByAppendingString:tid]]];
+    [r setValue:auth forHTTPHeaderField:@"Authorization"];
+    r.timeoutInterval = 12;
+    [[NSURLSession.sharedSession dataTaskWithRequest:r completionHandler:^(NSData *data, NSURLResponse *resp, NSError *error) {
+        id json = data.length ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
+        NSString *name = [json isKindOfClass:NSDictionary.class] && [json[@"name"] isKindOfClass:NSString.class] ? json[@"name"] : nil;
+        NSArray *artists = [json isKindOfClass:NSDictionary.class] && [json[@"artists"] isKindOfClass:NSArray.class] ? json[@"artists"] : nil;
+        NSDictionary *first = [artists.firstObject isKindOfClass:NSDictionary.class] ? artists.firstObject : nil;
+        NSString *artist = [first[@"name"] isKindOfClass:NSString.class] ? first[@"name"] : nil;
+        if (!name.length) return;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            load();
+            for (NSUInteger i = 0; i < sItems.count; i++) {
+                if (![sItems[i][@"uri"] isEqualToString:uri]) continue;
+                NSMutableDictionary *row = [sItems[i] mutableCopy];
+                row[@"title"] = name;
+                if (artist.length) row[@"artist"] = artist;
+                sItems[i] = row;
+                save();
+                MRGPostChange();
+                break;
+            }
+        });
+    }] resume];
+}
+
 void MRGTrashAdd(NSDictionary *track) {
     NSString *uri = track[@"uri"];
     if (![uri isKindOfClass:NSString.class] || ![uri hasPrefix:@"spotify:track:"]) return;
     load();
     for (NSDictionary *item in sItems) if ([item[@"uri"] isEqualToString:uri]) return;
     NSMutableDictionary *row = [@{@"uri": uri, @"date": NSDate.date} mutableCopy];
-    if ([track[@"title"] isKindOfClass:NSString.class]) row[@"title"] = track[@"title"];
+    if ([track[@"title"] isKindOfClass:NSString.class] && [track[@"title"] length]) row[@"title"] = track[@"title"];
     if ([track[@"artist"] isKindOfClass:NSString.class]) row[@"artist"] = track[@"artist"];
     [sItems insertObject:row atIndex:0];
     save();
+    if (!row[@"title"] || ![row[@"title"] length]) fillName(uri);
     MRGDJLog(@"trash: kept %@", row[@"title"] ?: uri);
     MRGPostChange();
 }
