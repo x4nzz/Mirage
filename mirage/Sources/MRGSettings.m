@@ -736,7 +736,9 @@ static NSString *ip3(NSInteger row) { return row == 3 ? @"Voice" : row == 4 ? @"
         case MRGSecAbout: {
             UITableViewCell *c = baseCell();
             c.textLabel.text = ip.row == 0 ? @"Version" : @"Vitrine";
-            c.detailTextLabel.text = ip.row == 0 ? @(MRG_VERSION) : (NSClassFromString(@"SGModSettingsRow") ? @"Loaded" : @"Not loaded");
+            c.detailTextLabel.adjustsFontSizeToFitWidth = YES;
+            c.detailTextLabel.minimumScaleFactor = 0.75;
+            c.detailTextLabel.text = ip.row == 0 ? MRGVersionLine() : (NSClassFromString(@"SGModSettingsRow") ? @"Loaded" : @"Not loaded");
             c.detailTextLabel.textColor = UIColor.grayColor;
             return c;
         }

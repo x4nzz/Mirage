@@ -7,12 +7,14 @@ FINALPACKAGE ?= 1
 
 MRG_VERSION := $(or $(shell cat VERSION 2>/dev/null),0.1.0)
 PACKAGE_VERSION := $(MRG_VERSION)
+# When this dylib was built (local time, no spaces), shown next to the version so a stale install is easy to spot.
+MRG_BUILD := $(shell date '+%Y-%m-%d_%H:%M')
 
 include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME := Mirage
 Mirage_FILES := $(shell find Sources -name '*.m' -o -name '*.x' | sort)
-Mirage_CFLAGS := -fobjc-arc -ISources -ISources/DJ -DMRG_VERSION=\"$(MRG_VERSION)\" -Wno-deprecated-declarations
+Mirage_CFLAGS := -fobjc-arc -ISources -ISources/DJ -DMRG_VERSION=\"$(MRG_VERSION)\" -DMRG_BUILD_DATE=\"$(MRG_BUILD)\" -Wno-deprecated-declarations
 Mirage_FRAMEWORKS := UIKit QuartzCore AVFoundation CoreMedia CoreVideo CoreImage ImageIO PhotosUI UniformTypeIdentifiers MobileCoreServices AudioToolbox Security AVFAudio
 # Runtime swizzling (Logos' internal generator), like Vitrine: no Substrate/ElleKit dependency in the IPA.
 Mirage_LOGOS_DEFAULT_GENERATOR := internal

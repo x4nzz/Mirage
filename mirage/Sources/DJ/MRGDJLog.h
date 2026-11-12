@@ -10,6 +10,8 @@ UIViewController *MRGDJLogPage(void);
 
 // The accent everything DJ is drawn in: Vitrine's accent color for the look in use when one is set (the redesign's,
 // #37F200 by default, or the native look's), Spotify's green otherwise. And the text color that reads on it.
+// "0.6.2 (2026-11-11 14:05)": the version and when this build was made.
+NSString *MRGVersionLine(void);
 UIColor *MRGAccent(void);
 UIColor *MRGOnAccent(void);
 

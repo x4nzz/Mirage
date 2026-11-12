@@ -1,4 +1,5 @@
 #import "MRGDJLog.h"
+#import <os/log.h>
 #import "Addons/MRGAddon.h"
 #import "Addons/MRGThemes.h"
 #import <objc/runtime.h>
@@ -159,3 +160,19 @@ void MRGPushPage(UIViewController *owner, UIViewController *page) {
 @implementation UINavigationController (MRGClose)
 - (void)mrg_close { [self dismissViewControllerAnimated:YES completion:nil]; }
 @end
+
+#ifndef MRG_BUILD_DATE
+#define MRG_BUILD_DATE "unknown"
+#endif
+NSString *MRGVersionLine(void) {
+    NSString *date = [@MRG_BUILD_DATE stringByReplacingOccurrencesOfString:@"_" withString:@" "];
+    return [NSString stringWithFormat:@"%@ (%@)", @MRG_VERSION, date];
+}
+
+// Which Mirage is running, once per launch: in the DJ log (shareable from settings) and the system log.
+__attribute__((constructor)) static void mrgLogVersion(void) {
+    os_log(OS_LOG_DEFAULT, "Mirage %{public}s (built %{public}s) loaded", MRG_VERSION, MRG_BUILD_DATE);
+    dispatch_async(dispatch_get_main_queue(), ^{
+        @try { MRGDJLog(@"Mirage %@ loaded, iOS %@", MRGVersionLine(), UIDevice.currentDevice.systemVersion); } @catch (NSException *e) {}
+    });
+}
