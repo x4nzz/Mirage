@@ -109,6 +109,24 @@ Every theme in that file is checked (only the known keys, colors as `#RRGGBB`, n
 doesn't pass is dropped. **Download theme list** turns the fetch off. Off, or a fetch that fails, shows the
 bundled catalog and says so.
 
+## 0.6.2: lyrics shelf, add-ons on the main page
+
+- **Pop-up lyrics 2.0** is a shelf at the top of Home, not an overlay. Mirage adds the card's height to
+  the top inset of Home's feed (`Home_CarouselKit.TouchCancellingCollectionView`) and puts the card in
+  that room, so the shelves below move down and the card scrolls with them. When Spotify sets its own
+  inset again, Mirage adds the room back on top of it. The room closes (animated) when there are no
+  synced lyrics, an ad is playing, nothing is playing, or the add-on is off. The active line is large and
+  bright, the lines around it are smaller, dimmer and softly blurred, and the column springs to each new
+  line. Settings: text size (18–30) and lines shown (3, 4 or 5). Tapping the card opens the player
+  through Spotify's now playing bar. In Low Power Mode or with Reduce Motion the lines change without
+  the spring or the blur, and the clock ticks twice a second instead of ten times.
+- **Add-ons on the main Mirage page**: every built-in add-on is a row with its icon, state, an on/off
+  switch (the same hooks as the shop) and a chevron into its settings. The shop stays for browsing.
+- **Polish**: icon tiles on every settings row, a header on the main page, icon tiles on shop cards, and
+  one finish on all preview art.
+- **Version check**: About → Version reads `0.6.2 (date time)` and every launch logs
+  `Mirage <version> (<build date>) loaded` to the DJ log and the system log.
+
 ## 0.6.1: the shop and what changed per add-on
 
 **The shop.** Each card shows its own preview, drawn on the phone in the accent color (`MRGAddonArt.m`; no
