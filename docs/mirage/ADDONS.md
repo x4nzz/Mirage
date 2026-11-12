@@ -109,6 +109,27 @@ Every theme in that file is checked (only the known keys, colors as `#RRGGBB`, n
 doesn't pass is dropped. **Download theme list** turns the fetch off. Off, or a fetch that fails, shows the
 bundled catalog and says so.
 
+## 0.6.5: new art, clearer lyrics glass, voices that sound different, keychain backup
+
+- **Art.** Every shop cover and icon is redrawn in the Vinyl card's style: a soft blurred mesh-gradient ground,
+  one glossy hero object with soft shadows, and fine grain (`scripts/mirage-art.py`, writes `MRGAddonArtData.m`).
+- **Pop-up lyrics.** *Glass clarity* (clear ↔ frosted) and *Tint* sliders apply live while dragging. The default is
+  clearer, and the lines get a subtle shadow so they stay readable on clear glass. `MRGAddonSetting.live` makes a
+  slider post changes continuously.
+- **Voices.** A preset no longer switches ElevenLabs (or the provider's voice) back to the free voice. Each preset
+  picks its ElevenLabs model: whisper, soothing, spark, hype and late night use `eleven_v3` with an audio tag
+  (`[whispers]` before every sentence for the whisper), v3's stability steps and ellipses instead of `<break/>`.
+  If v3 is refused (HTTP 400/403/422) they fall back to `eleven_multilingual_v2` (which follows *style*) and then to
+  `eleven_flash_v2_5`. Narrator and classic use multilingual v2. Soft & Close keeps flash first. Every request logs
+  its model, stability, style and speed. The iPhone voice gets a per-preset volume. Each preset row has a Preview
+  button.
+- **Settings footers** are gone or down to one short line.
+- **Keychain backup.** The autosave set (no API keys, no history) is also kept in the keychain item
+  `com.x4nzz.mirage.settings` / `settings` (AfterFirstUnlock, not synced, default access group). It's restored at
+  launch when the defaults and the autosave file are both empty. About → *Settings backup* shows the last save, and
+  *Restore from backup* applies it by hand. Whether the item survives a reinstall depends on the signing team and
+  access group: re-signing with another team (Ksign) or LiveContainer's keychain handling may hide it.
+
 ## 0.6.4: stability, safe mode, Shuffle+ on the shuffle button
 
 Stability (what was freezing or crashing Spotify, and what changed):
