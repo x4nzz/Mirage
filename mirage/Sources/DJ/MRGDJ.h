@@ -88,5 +88,8 @@ void MRGDJSetMirrorsUser(BOOL on);
 void MRGDJNoteUserMessage(NSString *text);
 void MRGDJForgetUserStyle(void);
 NSString *MRGDJStyleInstructions(void);   // nil when off or too few samples
+NSInteger MRGDJMirrorStrength(void);                  // 0 light, 1 strong (default), 2 max
+void MRGDJSetMirrorStrength(NSInteger level);
+NSArray<NSString *> *MRGDJMirrorStrengthNames(void);
 // The listener's taste from the on-phone history (on repeat, top and recent artists, throwbacks) as prompt text, or nil.
 NSString *MRGDJTasteText(void);

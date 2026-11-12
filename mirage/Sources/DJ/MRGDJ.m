@@ -93,7 +93,12 @@ NSString *MRGDJDeviceVoiceName(void) { return MRGVoiceSummary(); }
 BOOL MRGDJMirrorsUser(void) { return [V(@"mirage.dj.mirror", @YES) boolValue]; }
 void MRGDJSetMirrorsUser(BOOL on) { [D() setBool:on forKey:@"mirage.dj.mirror"]; }
 
-// The listener's own chat messages (the last 30, on this phone), as samples of how they write.
+// How strongly the DJ talks like the listener: 0 light (blended with the persona), 1 strong, 2 max.
+NSInteger MRGDJMirrorStrength(void) { return MIN(2, MAX(0, [V(@"mirage.dj.mirrorStrength", @1) integerValue])); }
+void MRGDJSetMirrorStrength(NSInteger level) { [D() setInteger:MIN(2, MAX(0, level)) forKey:@"mirage.dj.mirrorStrength"]; }
+NSArray<NSString *> *MRGDJMirrorStrengthNames(void) { return @[@"Light", @"Strong", @"Max"]; }
+
+// The listener's own messages (chat and the vibe box; the last 60, on this phone), as samples of how they write.
 void MRGDJNoteUserMessage(NSString *text) {
     NSString *t = [text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if (t.length < 2 || t.length > 400) return;
@@ -101,20 +106,89 @@ void MRGDJNoteUserMessage(NSString *text) {
     for (id x in [D() arrayForKey:@"mirage.dj.userVoice"]) if ([x isKindOfClass:NSString.class]) [a addObject:x];
     [a removeObject:t];
     [a addObject:t];
-    while (a.count > 30) [a removeObjectAtIndex:0];
+    while (a.count > 60) [a removeObjectAtIndex:0];
     [D() setObject:a forKey:@"mirage.dj.userVoice"];
 }
 void MRGDJForgetUserStyle(void) { [D() removeObjectForKey:@"mirage.dj.userVoice"]; }
+
+static BOOL isEmoji(unichar c, NSString *s, NSRange r) {
+    if (r.length > 1) return YES;   // a surrogate pair or a sequence: emoji (or a rare symbol)
+    return (c >= 0x2600 && c <= 0x27BF) || c == 0x2764;
+}
+
+// What their messages say about how they write, counted, not guessed: casing, their slang and stretched words,
+// emoji, punctuation and length. Only words they really used are listed.
+static NSString *styleProfile(NSArray<NSString *> *msgs) {
+    static NSSet *slang;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        slang = [NSSet setWithArray:@[@"ngl", @"fr", @"frfr", @"lowkey", @"highkey", @"rn", @"u", @"ur", @"bc", @"cuz", @"tbh", @"idk", @"lol", @"lmao", @"lmfao", @"bro", @"bruh", @"fire", @"lit", @"vibe", @"vibes", @"deadass", @"ong", @"finna", @"tryna", @"gonna", @"wanna", @"kinda", @"sm", @"pls", @"plz", @"ty", @"yall", @"imo", @"smh", @"istg", @"nah", @"yea", @"ya", @"yo", @"aight", @"ight", @"slaps", @"goated", @"mid", @"bussin", @"cap", @"valid", @"btw", @"omg", @"wtf", @"af", @"tho", @"dope", @"sick", @"bet", @"fam", @"dawg", @"twin", @"gang", @"type", @"lemme", @"gimme", @"prolly", @"def", @"rly", @"srsly", @"k", @"kk", @"ok", @"okay", @"hella", @"mad", @"crazy", @"insane", @"hard", @"go", @"heat", @"banger", @"bangers"]];
+    });
+    NSUInteger lower = 0, endsBare = 0, withEmoji = 0, exclaim = 0, question = 0, ellipsis = 0, words = 0, caps = 0;
+    NSCountedSet *used = [NSCountedSet set], *emoji = [NSCountedSet set];
+    NSMutableOrderedSet *stretched = [NSMutableOrderedSet orderedSet];
+    NSRegularExpression *stretch = [NSRegularExpression regularExpressionWithPattern:@"\\b\\w*([a-z])\\1\\1+\\w*\\b" options:NSRegularExpressionCaseInsensitive error:nil];
+    for (NSString *m in msgs) {
+        NSString *letters = [[m componentsSeparatedByCharactersInSet:NSCharacterSet.letterCharacterSet.invertedSet] componentsJoinedByString:@""];
+        if (letters.length && [letters isEqualToString:letters.lowercaseString]) lower++;
+        unichar last = m.length ? [m characterAtIndex:m.length - 1] : 0;
+        if (![[NSCharacterSet characterSetWithCharactersInString:@".!?…"] characterIsMember:last]) endsBare++;
+        if ([m containsString:@"!!"] || [m hasSuffix:@"!"]) exclaim++;
+        if ([m containsString:@"??"]) question++;
+        if ([m containsString:@"..."] || [m containsString:@"…"]) ellipsis++;
+        __block BOOL e = NO;
+        [m enumerateSubstringsInRange:NSMakeRange(0, m.length) options:NSStringEnumerationByComposedCharacterSequences usingBlock:^(NSString *sub, NSRange r, NSRange er, BOOL *stop) {
+            if (isEmoji([sub characterAtIndex:0], sub, r)) { e = YES; [emoji addObject:sub]; }
+        }];
+        if (e) withEmoji++;
+        for (NSString *w in [m.lowercaseString componentsSeparatedByCharactersInSet:NSCharacterSet.alphanumericCharacterSet.invertedSet]) {
+            if (!w.length) continue;
+            words++;
+            if ([slang containsObject:w]) [used addObject:w];
+        }
+        for (NSString *w in [m componentsSeparatedByCharactersInSet:NSCharacterSet.whitespaceCharacterSet]) if (w.length >= 3 && [w isEqualToString:w.uppercaseString] && ![w isEqualToString:w.lowercaseString]) caps++;
+        for (NSTextCheckingResult *r in [stretch matchesInString:m options:0 range:NSMakeRange(0, m.length)]) if (stretched.count < 4) [stretched addObject:[[m substringWithRange:r.range] lowercaseString]];
+    }
+    NSUInteger n = msgs.count;
+    NSMutableArray *bits = [NSMutableArray array];
+    if (lower * 10 >= n * 7) [bits addObject:@"writes all lowercase"];
+    else if (lower * 10 <= n * 2) [bits addObject:@"uses normal capitalization"];
+    if (caps >= 2) [bits addObject:@"sometimes CAPS a word for emphasis"];
+    if (endsBare * 10 >= n * 7) [bits addObject:@"rarely ends with a period"];
+    if (exclaim * 4 >= n) [bits addObject:@"uses exclamation marks"];
+    if (question >= 2) [bits addObject:@"doubles question marks"];
+    if (ellipsis >= 2) [bits addObject:@"trails off with ..."];
+    NSArray *slangSorted = [used.allObjects sortedArrayUsingComparator:^NSComparisonResult(id a, id b) { NSUInteger x = [used countForObject:a], y = [used countForObject:b]; return x > y ? NSOrderedAscending : x < y ? NSOrderedDescending : NSOrderedSame; }];
+    if (slangSorted.count) [bits addObject:[NSString stringWithFormat:@"their words: %@", [[slangSorted subarrayWithRange:NSMakeRange(0, MIN(slangSorted.count, (NSUInteger)10))] componentsJoinedByString:@", "]]];
+    if (stretched.count) [bits addObject:[NSString stringWithFormat:@"stretches words (%@)", [stretched.array componentsJoinedByString:@", "]]];
+    if (withEmoji == 0) [bits addObject:@"no emoji"];
+    else {
+        NSArray *top = [emoji.allObjects sortedArrayUsingComparator:^NSComparisonResult(id a, id b) { NSUInteger x = [emoji countForObject:a], y = [emoji countForObject:b]; return x > y ? NSOrderedAscending : x < y ? NSOrderedDescending : NSOrderedSame; }];
+        [bits addObject:[NSString stringWithFormat:@"emoji in %lu of %lu messages (%@)", (unsigned long)withEmoji, (unsigned long)n, [[top subarrayWithRange:NSMakeRange(0, MIN(top.count, (NSUInteger)3))] componentsJoinedByString:@" "]]];
+    }
+    double avg = n ? (double)words / n : 0;
+    [bits addObject:avg < 6 ? @"very short messages" : avg < 14 ? @"short messages" : @"longer messages"];
+    return [bits componentsJoinedByString:@"; "];
+}
 
 NSString *MRGDJStyleInstructions(void) {
     if (!MRGDJMirrorsUser()) return nil;
     NSMutableArray *a = [NSMutableArray array];
     for (id x in [D() arrayForKey:@"mirage.dj.userVoice"]) if ([x isKindOfClass:NSString.class]) [a addObject:x];
     if (a.count < 2) return nil;
-    NSArray *recent = [a subarrayWithRange:NSMakeRange(a.count - MIN(a.count, (NSUInteger)6), MIN(a.count, (NSUInteger)6))];
+    NSInteger level = MRGDJMirrorStrength();
+    NSUInteger shown = level == 0 ? 6 : 12;
+    NSArray *recent = [a subarrayWithRange:NSMakeRange(a.count - MIN(a.count, shown), MIN(a.count, shown))];
     NSMutableString *p = [NSMutableString stringWithString:@"Talk the way this listener talks. Things they've written to you:\n"];
     for (NSString *m in recent) [p appendFormat:@"- \"%@\"\n", m];
-    [p appendString:@"Mirror their register: casing, slang, abbreviations, emoji (or none), sentence length and energy, blended with your persona. Sound like a friend who talks like them, never a parody; don't copy their typos or overdo slang."];
+    [p appendFormat:@"How they write (counted from %lu of their messages): %@.\n", (unsigned long)a.count, styleProfile(a)];
+    if (level == 0)
+        [p appendString:@"Mirror their register: casing, slang, abbreviations, emoji (or none), sentence length and energy, blended with your persona. Sound like a friend who talks like them, never a parody; don't copy their typos or overdo slang."];
+    else if (level == 1)
+        [p appendString:@"Write like them, clearly: their casing, their own slang words above (used naturally, not all at once), their emoji habit, punctuation and message length. Your persona only sets the energy. Sound like their friend texting back, never a parody, and don't copy typos."];
+    else
+        [p appendString:@"Sound as close to them as you can: their exact casing, their words and stretched words, their punctuation, emoji habit and length, as if they wrote it themselves. Your persona only sets the energy. Never a parody, and don't use slang they haven't used."];
+    [p appendString:@"\nMirroring changes only HOW you say things, never WHAT is true: facts still come only from what you're given, so never invent a fact, number, story or claim to sound like them. In lines that are read aloud (DJ lines and intros), leave emoji out and keep words pronounceable."];
     return p;
 }
 
@@ -1117,6 +1191,7 @@ static NSInteger intentOf(NSString *text) {
         MRGPlayerControl(controls[cmd], ^(BOOL ok, NSString *error) { if (!ok) [self fail:error ?: @"Spotify's player refused."]; });
         return;
     }
+    MRGDJNoteUserMessage(text);   // how they write, for Talk like me
     NSInteger intent = intentOf(text ?: @"");
     MRGDJLog(@"vibe box: \"%@\" → %@", text.length > 60 ? [[text substringToIndex:60] stringByAppendingString:@"…"] : text,
              @[@"music", @"artist question", @"song question", @"question"][intent]);

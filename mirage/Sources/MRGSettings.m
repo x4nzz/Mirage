@@ -143,7 +143,7 @@ typedef NS_ENUM(NSInteger, MRGBgSection) { MRGBgPreview, MRGBgMedia, MRGBgLibrar
 
 // The AI DJ page's groups, as rows of the old DJ section (djCell: row numbers; 12 is Talk like me).
 static NSArray<NSArray<NSNumber *> *> *djGroups(void) {
-    return @[@[@0, @1, @2, @13], @[@3, @4, @12], @[@6], @[@7, @8, @9], @[@10, @5, @11]];
+    return @[@[@0, @1, @2, @13], @[@3, @4, @12, @14], @[@6], @[@7, @8, @9], @[@10, @5, @11]];
 }
 static NSArray<NSString *> *djGroupTitles(void) { return @[@"AI provider", @"Voice & personality", @"Your listening", @"On screen", @"Mirage DJ"]; }
 
@@ -444,6 +444,13 @@ static UITableViewCell *baseCell(void) {
         case 9: return [self switchCell:@"DJ button on Now Playing" on:MRGDJShowsPlayerButton() tag:22 symbol:@"play.circle.fill"];
         case 10: return [self actionCell:@"Open Mirage DJ" symbol:@"waveform.and.mic" destructive:NO enabled:YES];
         case 12: return [self switchCell:@"Talk like me" on:MRGDJMirrorsUser() tag:23 symbol:@"person.wave.2.fill"];
+        case 14: {
+            UITableViewCell *c = [self actionCell:@"How much like me" symbol:@"dial.medium.fill" destructive:NO enabled:MRGDJMirrorsUser()];
+            c.detailTextLabel.text = MRGDJMirrorStrengthNames()[MRGDJMirrorStrength()];
+            c.detailTextLabel.textColor = UIColor.grayColor;
+            c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+            return c;
+        }
         default: {
             UITableViewCell *c = [self actionCell:@"DJ debug log" symbol:@"ladybug.fill" destructive:NO enabled:YES];
             c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
@@ -812,6 +819,22 @@ static NSString *ip3(NSInteger row) { return row == 3 ? @"Voice" : row == 4 ? @"
     return baseCell();
 }
 
+- (void)pickMirrorStrength:(UITableViewCell *)cell {
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:@"How much like you" message:@"Only how it talks; facts never change." preferredStyle:UIAlertControllerStyleActionSheet];
+    NSArray *names = MRGDJMirrorStrengthNames();
+    for (NSInteger i = 0; i < (NSInteger)names.count; i++) {
+        NSString *title = i == MRGDJMirrorStrength() ? [names[i] stringByAppendingString:@" ✓"] : names[i];
+        [a addAction:[UIAlertAction actionWithTitle:title style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) {
+            MRGDJSetMirrorStrength(i);
+            [self.tableView reloadData];
+        }]];
+    }
+    [a addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    a.popoverPresentationController.sourceView = cell ?: self.view;
+    a.popoverPresentationController.sourceRect = cell ? cell.bounds : CGRectZero;
+    [self presentViewController:a animated:YES completion:nil];
+}
+
 - (void)tableView:(UITableView *)t didSelectRowAtIndexPath:(NSIndexPath *)ip {
     [t deselectRowAtIndexPath:ip animated:YES];
     if (self.djOnly) {
@@ -826,6 +849,7 @@ static NSString *ip3(NSInteger row) { return row == 3 ? @"Voice" : row == 4 ? @"
         else if (row == 10) MRGShowDJ(self);
         else if (row == 11) MRGPushPage(self, MRGDJLogPage());
         else if (row == 13) [self editBackupKey];
+        else if (row == 14 && MRGDJMirrorsUser()) [self pickMirrorStrength:[t cellForRowAtIndexPath:ip]];
         return;
     }
     if (self.bgOnly) {
@@ -965,7 +989,7 @@ static NSString *ip3(NSInteger row) { return row == 3 ? @"Voice" : row == 4 ? @"
     else if (sw.tag == 20) MRGDJSetDucks(sw.on);
     else if (sw.tag == 21) MRGDJSetShowsPill(sw.on);
     else if (sw.tag == 22) MRGDJSetShowsPlayerButton(sw.on);
-    else if (sw.tag == 23) MRGDJSetMirrorsUser(sw.on);
+    else if (sw.tag == 23) { MRGDJSetMirrorsUser(sw.on); dispatch_async(dispatch_get_main_queue(), ^{ [self.tableView reloadData]; }); }
     else if (sw.tag == 24) {
         MRGCompatSetOverride(sw.on);
         MRGPostChange();
