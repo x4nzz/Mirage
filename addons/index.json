@@ -10,6 +10,15 @@
       "type": "Now Playing",
       "author": "Mirage",
       "min_mirage": "0.5.0"
+    },
+    {
+      "id": "dynamic-colors",
+      "name": "Dynamic colors",
+      "description": "Takes a color from the album cover and tints Mirage's accent, toggles and Vitrine's glass. Cached per song, so a track change doesn't flash or stutter. A theme can keep its own accent.",
+      "version": "1.0",
+      "type": "Look",
+      "author": "Mirage",
+      "min_mirage": "0.6.0"
     }
   ]
 }

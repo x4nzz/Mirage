@@ -12,6 +12,8 @@ static NSString *const kBundled = @"ewogICJmb3JtYXQiOiAxLAogICJ0aGVtZXMiOiBbCiAg
 
 static NSUserDefaults *D(void) { return NSUserDefaults.standardUserDefaults; }
 static NSInteger (^sDynamicRGB)(void);
+static NSInteger (^sSwitchRGB)(void);
+static UIColor *(^sGlassBlock)(void);
 static NSArray<NSDictionary *> *sShown;
 static NSString *sCatalogNote;
 static BOOL sSwizzled;
@@ -145,11 +147,17 @@ NSInteger MRGLookLiveRGB(void) {
 }
 
 UIColor *MRGLookGlassTint(void) {
+    if (sGlassBlock) {
+        UIColor *override = sGlassBlock();
+        if (override) return override;
+    }
     NSInteger rgb = rgbOf(MRGAppliedTheme(), @"glassTint");
     return rgb >= 0 ? MRGColorFromRGB(rgb) : nil;
 }
 
 void MRGLookSetDynamicRGB(NSInteger (^block)(void)) { sDynamicRGB = [block copy]; }
+void MRGLookSetSwitchRGB(NSInteger (^block)(void)) { sSwitchRGB = [block copy]; }
+void MRGLookSetGlassTint(UIColor *(^block)(void)) { sGlassBlock = [block copy]; }
 
 #pragma mark - paint Spotify's green and Vitrine's glass with the theme
 
@@ -190,30 +198,40 @@ static id liveInit(id self, SEL _cmd, CGFloat r, CGFloat g, CGFloat b, CGFloat a
 }
 
 static char kRecolored;
-static void recolorTree(UIView *view, NSInteger live, NSInteger depth, NSUInteger *seen) {
+static void recolorTree(UIView *view, NSInteger switches, UIColor *glass, NSInteger depth, NSUInteger *seen) {
     if (!view || depth > 25 || *seen > 5000) return;
     (*seen)++;
     if ([view isKindOfClass:UISwitch.class]) {
         UISwitch *sw = (UISwitch *)view;
-        if (live >= 0) {
-            sw.onTintColor = MRGColorFromRGB(live);
-            objc_setAssociatedObject(sw, &kRecolored, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        } else if (objc_getAssociatedObject(sw, &kRecolored)) {
-            sw.onTintColor = MRGColorFromRGB(storedAccent());
+        BOOL ours = objc_getAssociatedObject(sw, &kRecolored) != nil;
+        if (switches >= 0) {
+            CGFloat r = 0, g = 0, b = 0, a = 0;
+            BOOL close = ours;
+            if (!close && [sw.onTintColor getRed:&r green:&g blue:&b alpha:&a]) {
+                NSInteger live = MRGLookLiveRGB();
+                close = near(r, g, b, 0x1ED760) || near(r, g, b, 0x34C759) || near(r, g, b, storedAccent())
+                    || (live >= 0 && near(r, g, b, live)) || near(r, g, b, switches);
+            }
+            if (close) {
+                sw.onTintColor = MRGColorFromRGB(switches);
+                objc_setAssociatedObject(sw, &kRecolored, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            }
+        } else if (ours) {
+            NSInteger back = MRGLookLiveRGB();
+            sw.onTintColor = MRGColorFromRGB(back >= 0 ? back : storedAccent());
             objc_setAssociatedObject(sw, &kRecolored, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         }
     }
     if ([view isKindOfClass:UIVisualEffectView.class]) {
         UIVisualEffect *effect = ((UIVisualEffectView *)view).effect;
         if ([NSStringFromClass(effect.class) containsString:@"Glass"] && [effect respondsToSelector:@selector(setTintColor:)]) {
-            UIColor *tint = live >= 0 ? [MRGLookGlassTint() colorWithAlphaComponent:0.42] : nil;
-            if (live >= 0 && tint) ((void (*)(id, SEL, UIColor *))objc_msgSend)(effect, @selector(setTintColor:), tint);
+            if (glass) ((void (*)(id, SEL, UIColor *))objc_msgSend)(effect, @selector(setTintColor:), [glass colorWithAlphaComponent:0.42]);
             else if (objc_getAssociatedObject(view, &kRecolored)) ((void (*)(id, SEL, UIColor *))objc_msgSend)(effect, @selector(setTintColor:), nil);
-            if (live >= 0) objc_setAssociatedObject(view, &kRecolored, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            if (glass) objc_setAssociatedObject(view, &kRecolored, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
             else objc_setAssociatedObject(view, &kRecolored, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         }
     }
-    for (UIView *sub in view.subviews) recolorTree(sub, live, depth + 1, seen);
+    for (UIView *sub in view.subviews) recolorTree(sub, switches, glass, depth + 1, seen);
 }
 
 static void installSwizzle(void) {
@@ -227,11 +245,12 @@ static void installSwizzle(void) {
 
 void MRGLookRefresh(void) {
     installSwizzle();
-    NSInteger live = MRGLookLiveRGB();
+    NSInteger switches = sSwitchRGB ? sSwitchRGB() : MRGLookLiveRGB();
+    UIColor *glass = MRGLookGlassTint();
     NSUInteger seen = 0;
     for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
         if (![scene isKindOfClass:UIWindowScene.class]) continue;
-        for (UIWindow *window in ((UIWindowScene *)scene).windows) recolorTree(window, live, 0, &seen);
+        for (UIWindow *window in ((UIWindowScene *)scene).windows) recolorTree(window, switches, glass, 0, &seen);
     }
 }
 

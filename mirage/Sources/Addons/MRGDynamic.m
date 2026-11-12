@@ -1,0 +1,260 @@
+// Dynamic colors: a palette from the current cover, cached per track, blended into Mirage's accent,
+// toggles and Vitrine's glass. The previous color stays up until the new one is ready, so a track
+// change doesn't flash. Work is a 24×24 downsample off the main thread, once per track.
+#import "Addons/MRGAddon.h"
+#import "Addons/MRGThemes.h"
+#import "MRGAddons.h"
+#import "MRGPlayer.h"
+#import "MRGPrefs.h"
+#import "MRGDJLog.h"
+#import <objc/runtime.h>
+
+static NSString *const kAddon = @"dynamic-colors";
+static NSInteger sColor = -1;
+static NSString *sTrack;
+static NSCache *sMemory;
+static NSMutableDictionary *sDisk;
+static BOOL sDiskDirty;
+
+static NSInteger baseRGB(void) {
+    NSInteger theme = -1;
+    NSDictionary *applied = MRGAppliedTheme();
+    if (applied) {
+        NSString *hex = applied[@"accent"];
+        if ([hex isKindOfClass:NSString.class]) {
+            NSScanner *scanner = [NSScanner scannerWithString:[hex hasPrefix:@"#"] ? [hex substringFromIndex:1] : hex];
+            unsigned int rgb = 0;
+            if ([scanner scanHexInt:&rgb]) theme = rgb;
+        }
+    }
+    if (theme >= 0) return theme;
+    NSUserDefaults *d = NSUserDefaults.standardUserDefaults;
+    BOOL redesign = [d boolForKey:@"spotifyglass.redesign"];
+    if (@available(iOS 26.0, *)) {}
+    else redesign = redesign && [d boolForKey:@"spotifyglass.redesign.untested"];
+    id v = [d objectForKey:redesign ? @"spotifyglass.redesign.accent" : @"spotifyglass.accent"];
+    NSInteger rgb = [v isKindOfClass:NSNumber.class] ? [v integerValue] : (redesign ? 0x37F200 : 0x1ED760);
+    return (rgb < 0 || rgb > 0xFFFFFF) ? 0x1ED760 : rgb;
+}
+
+static NSInteger blend(NSInteger from, NSInteger to, double t) {
+    t = MIN(1, MAX(0, t));
+    NSInteger out = 0;
+    for (int shift = 16; shift >= 0; shift -= 8) {
+        double a = (from >> shift) & 255, b = (to >> shift) & 255;
+        out |= (NSInteger)lround(a + (b - a) * t) << shift;
+    }
+    return out;
+}
+
+static double strength(void) { return MIN(1, MAX(0, MRGAddonNumber(kAddon, @"strength", 0.75))); }
+static NSInteger fallbackRGB(void) { return MRGAddonInteger(kAddon, @"fallback", 0x1ED760) & 0xFFFFFF; }
+static BOOL element(NSString *key) { return MRGAddonFlag(kAddon, key, YES); }
+
+static NSInteger blended(NSInteger extracted) {
+    NSInteger color = extracted >= 0 ? extracted : fallbackRGB();
+    return blend(baseRGB(), color, strength());
+}
+
+static NSURL *cacheFile(void) {
+    NSURL *lib = [NSFileManager.defaultManager URLsForDirectory:NSLibraryDirectory inDomains:NSUserDomainMask].firstObject;
+    NSURL *dir = [lib URLByAppendingPathComponent:@"Mirage" isDirectory:YES];
+    [NSFileManager.defaultManager createDirectoryAtURL:dir withIntermediateDirectories:YES attributes:nil error:nil];
+    return [dir URLByAppendingPathComponent:@"dynamic-colors.plist"];
+}
+
+static void loadDisk(void) {
+    if (sDisk) return;
+    id obj = [NSDictionary dictionaryWithContentsOfURL:cacheFile()];
+    sDisk = [obj isKindOfClass:NSDictionary.class] ? [obj mutableCopy] : [NSMutableDictionary dictionary];
+}
+
+static void saveDiskSoon(void) {
+    if (sDiskDirty) return;
+    sDiskDirty = YES;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        sDiskDirty = NO;
+        loadDisk();
+        [sDisk writeToURL:cacheFile() atomically:YES];
+    });
+}
+
+static NSInteger cached(NSString *uri) {
+    if (!sMemory) sMemory = [NSCache new];
+    NSNumber *hit = [sMemory objectForKey:uri];
+    if (hit) return hit.integerValue;
+    loadDisk();
+    NSNumber *disk = sDisk[uri];
+    if ([disk isKindOfClass:NSNumber.class]) {
+        [sMemory setObject:disk forKey:uri];
+        return disk.integerValue;
+    }
+    return -1;
+}
+
+static void store(NSString *uri, NSInteger rgb) {
+    if (!sMemory) sMemory = [NSCache new];
+    [sMemory setObject:@(rgb) forKey:uri];
+    loadDisk();
+    sDisk[uri] = @(rgb);
+    while (sDisk.count > 100) [sDisk removeObjectForKey:sDisk.allKeys.firstObject];
+    saveDiskSoon();
+}
+
+// Most common saturated color in a 24×24 downsample. -1 when the picture is too flat to use.
+static NSInteger paletteFrom(UIImage *image) {
+    if (!image) return -1;
+    CGSize size = CGSizeMake(24, 24);
+    UIGraphicsBeginImageContextWithOptions(size, YES, 1);
+    [image drawInRect:(CGRect){CGPointZero, size}];
+    UIImage *small = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    CGImageRef cg = small.CGImage;
+    if (!cg) return -1;
+    CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+    UInt8 pixels[24 * 24 * 4];
+    CGContextRef ctx = CGBitmapContextCreate(pixels, 24, 24, 8, 24 * 4, space, kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
+    CGColorSpaceRelease(space);
+    if (!ctx) return -1;
+    CGContextDrawImage(ctx, CGRectMake(0, 0, 24, 24), cg);
+    CGContextRelease(ctx);
+    NSMutableDictionary<NSNumber *, NSNumber *> *buckets = [NSMutableDictionary dictionary];
+    for (int i = 0; i < 24 * 24; i++) {
+        int r = pixels[i * 4], g = pixels[i * 4 + 1], b = pixels[i * 4 + 2];
+        double maxv = MAX(r, MAX(g, b)) / 255.0, minv = MIN(r, MIN(g, b)) / 255.0;
+        double l = (maxv + minv) / 2, sat = maxv == minv ? 0 : (maxv - minv) / (1 - fabs(2 * l - 1));
+        if (l < 0.08 || l > 0.94 || sat < 0.18) continue;
+        NSInteger key = ((r & 0xF0) << 8) | ((g & 0xF0) << 4) | (b & 0xF0);
+        buckets[@(key)] = @(buckets[@(key)].integerValue + 1);
+    }
+    NSInteger best = -1, bestScore = 0;
+    for (NSNumber *key in buckets) {
+        NSInteger count = buckets[key].integerValue;
+        if (count > bestScore) { bestScore = count; best = key.integerValue | 0x0F0F0F; }
+    }
+    return bestScore >= 4 ? best : -1;
+}
+
+static UIImage *coverOnScreen(void) {
+    __block UIImage *best = nil;
+    __block CGFloat area = 0;
+    void (^walk)(UIView *) = ^(UIView *root) {
+        NSMutableArray *stack = [NSMutableArray arrayWithObject:root];
+        NSUInteger seen = 0;
+        while (stack.count && seen < 2500) {
+            UIView *view = stack.lastObject;
+            [stack removeLastObject];
+            seen++;
+            if ([view isKindOfClass:UIImageView.class]) {
+                UIImage *image = ((UIImageView *)view).image;
+                CGFloat w = view.bounds.size.width * view.bounds.size.height;
+                if (image && view.bounds.size.width >= 80 && w > area) { best = image; area = w; }
+            }
+            [stack addObjectsFromArray:view.subviews];
+        }
+    };
+    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+        if (![scene isKindOfClass:UIWindowScene.class]) continue;
+        for (UIWindow *window in ((UIWindowScene *)scene).windows) walk(window);
+    }
+    return best;
+}
+
+static void applyColor(NSInteger extracted, NSString *uri) {
+    NSInteger next = blended(extracted);
+    BOOL changed = next != sColor;
+    sColor = next;
+    sTrack = [uri copy];
+    if (changed && MRGAddonInstalled(kAddon)) MRGLookRefresh();
+}
+
+static void resolve(NSDictionary *now) {
+    if (!MRGAddonInstalled(kAddon) || [now[@"ad"] boolValue]) return;
+    NSString *uri = now[@"uri"];
+    if (!uri.length) return;
+    if ([uri isEqualToString:sTrack] && sColor >= 0) return;
+    NSInteger hit = cached(uri);
+    if (hit >= 0) { applyColor(hit, uri); return; }
+    // Keep the color that's already on screen until this track's own color is ready.
+    sTrack = [uri copy];
+    NSString *urlString = now[@"image"];
+    NSURL *url = [urlString hasPrefix:@"https://"] ? [NSURL URLWithString:urlString] : nil;
+    if (!url) {
+        UIImage *local = coverOnScreen();
+        if (!local) { applyColor(-1, uri); return; }
+        NSInteger rgb = paletteFrom(local);
+        if (rgb >= 0) store(uri, rgb);
+        applyColor(rgb, uri);
+        return;
+    }
+    [[NSURLSession.sharedSession dataTaskWithURL:url completionHandler:^(NSData *data, NSURLResponse *resp, NSError *error) {
+        UIImage *image = data.length ? [UIImage imageWithData:data] : nil;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (![uri isEqualToString:sTrack]) return;
+            NSInteger rgb = paletteFrom(image);
+            if (rgb >= 0) store(uri, rgb);
+            applyColor(rgb, uri);
+        });
+    }] resume];
+}
+
+static NSInteger channel(NSString *key) {
+    if (!MRGAddonInstalled(kAddon) || !MRGThemeAllowsDynamicColors() || !element(key) || sColor < 0) return -1;
+    return sColor;
+}
+
+@interface MRGDynamicAddon : NSObject <MRGAddon>
+@end
+@implementation MRGDynamicAddon
+- (NSString *)addonID { return kAddon; }
+- (NSString *)addonName { return @"Dynamic colors"; }
+- (NSString *)addonCategory { return @"Look"; }
+- (NSString *)addonVersion { return @"1.0"; }
+- (NSString *)addonDescription { return @"Takes a color from the album cover and tints Mirage's accent, toggles and Vitrine's glass. A theme can say that its own accent stays."; }
+- (NSArray<MRGAddonSetting *> *)addonSettings {
+    MRGAddonSetting *strengthRow = [MRGAddonSetting slider:@"strength" title:@"Strength" min:0 max:1 fallback:0.75];
+    strengthRow.footer = @"How far the cover's color pulls the accent. Zero keeps the accent you already have.";
+    MRGAddonSetting *accent = [MRGAddonSetting toggle:@"accent" title:@"Accent" fallback:YES];
+    MRGAddonSetting *toggles = [MRGAddonSetting toggle:@"toggles" title:@"Toggles" fallback:YES];
+    MRGAddonSetting *glass = [MRGAddonSetting toggle:@"glass" title:@"Vitrine's glass" fallback:YES];
+    glass.footer = @"A theme that doesn't allow dynamic colors keeps its own accent and glass.";
+    MRGAddonSetting *fallback = [MRGAddonSetting color:@"fallback" title:@"Fallback" fallbackRGB:0x1ED760];
+    fallback.footer = @"Used when the cover has no color worth taking. The last color stays up until this one is ready, so the screen doesn't flash.";
+    return @[strengthRow, accent, toggles, glass, fallback];
+}
+- (void)addonDidEnable {
+    MRGLookSetDynamicRGB(^NSInteger { return channel(@"accent"); });
+    MRGLookSetSwitchRGB(^NSInteger { return channel(@"toggles"); });
+    MRGLookSetGlassTint(^UIColor *{
+        NSInteger rgb = channel(@"glass");
+        return rgb >= 0 ? MRGColorFromRGB(rgb) : nil;
+    });
+    resolve(MRGNowPlaying());
+    MRGLookRefresh();
+}
+- (void)addonDidDisable {
+    sColor = -1;
+    sTrack = nil;
+    MRGLookSetDynamicRGB(nil);
+    MRGLookSetSwitchRGB(nil);
+    MRGLookSetGlassTint(nil);
+    MRGLookRefresh();
+}
+- (NSString *)addonSummary { return sColor >= 0 ? [NSString stringWithFormat:@"#%06lX", (long)sColor] : @"From the cover"; }
+@end
+
+__attribute__((constructor)) static void mrgDynamicConstructor(void) {
+    MRGAddonRegister([MRGDynamicAddon new]);
+    [NSNotificationCenter.defaultCenter addObserverForName:MRGPlayerTrackChangedNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
+        if (!MRGAddonInstalled(kAddon)) return;
+        resolve(n.userInfo);
+    }];
+    [NSNotificationCenter.defaultCenter addObserverForName:MRGSettingsChangedNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
+        if (!MRGAddonInstalled(kAddon)) return;
+        if (sTrack.length) {
+            NSInteger extracted = cached(sTrack);
+            if (extracted >= 0) sColor = blended(extracted);
+        }
+        MRGLookRefresh();
+    }];
+}

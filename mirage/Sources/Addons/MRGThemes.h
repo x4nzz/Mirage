@@ -8,6 +8,8 @@ UIColor *MRGLookGlassTint(void);          // nil when nothing is tinting the gla
 BOOL MRGThemeAllowsDynamicColors(void);   // YES when no theme is on, or the theme says dynamic colors may override it
 NSDictionary *MRGAppliedTheme(void);      // the validated theme dictionary, or nil
 
-// Dynamic colors registers this. The block returns an 0xRRGGBB to use instead of the theme, or -1 to leave the theme.
+// Dynamic colors registers these. A block returns an 0xRRGGBB, or -1 / nil to leave the theme alone.
 void MRGLookSetDynamicRGB(NSInteger (^block)(void));
+void MRGLookSetSwitchRGB(NSInteger (^block)(void));
+void MRGLookSetGlassTint(UIColor *(^block)(void));
 void MRGLookRefresh(void);
