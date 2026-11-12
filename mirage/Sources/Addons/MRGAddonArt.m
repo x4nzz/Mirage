@@ -313,3 +313,52 @@ UIImage *MRGAddonArt(NSString *addonID, CGSize size) {
     if (img) [cache setObject:img forKey:key];
     return img;
 }
+
+NSString *MRGAddonSymbol(NSString *addonID) {
+    NSDictionary *map = @{@"vinyl": @"record.circle", @"dynamic-colors": @"paintpalette.fill", @"playlist-tools": @"list.bullet.rectangle.fill",
+                          @"genres": @"tag.fill", @"popup-lyrics": @"quote.bubble.fill", @"trash": @"trash.fill", @"shuffle-plus": @"shuffle"};
+    return map[addonID ?: @""] ?: @"puzzlepiece.extension.fill";
+}
+
+// Each add-on gets its own hue near the accent, so a list of tiles reads as a set and not one color repeated.
+static CGFloat hueShift(NSString *addonID) {
+    NSArray *order = knownIDs();
+    NSUInteger i = [order indexOfObject:addonID ?: @""];
+    if (i == NSNotFound) return 0;
+    return ((CGFloat)i / MAX((CGFloat)order.count, 1) - 0.5) * 0.16;
+}
+
+UIImage *MRGAddonIcon(NSString *addonID, CGFloat side) {
+    if (side < 8) side = 32;
+    UIColor *accent = MRGAccent() ?: [UIColor colorWithRed:0.66 green:0.42 blue:1 alpha:1];
+    static NSCache *cache;
+    if (!cache) cache = [NSCache new];
+    NSString *key = [NSString stringWithFormat:@"icon|%@|%.0f|%06lX", addonID ?: @"", side, (long)MRGRGBFromColor(accent)];
+    UIImage *hit = [cache objectForKey:key];
+    if (hit) return hit;
+    CGFloat h = 0, s = 0, b = 0, a = 1;
+    if (![accent getHue:&h saturation:&s brightness:&b alpha:&a]) { h = 0.75; s = 0.6; b = 0.9; }
+    h = fmod(h + hueShift(addonID) + 1, 1);
+    UIColor *top = [UIColor colorWithHue:h saturation:MIN(1, s * 0.85) brightness:MIN(1, MAX(b, 0.7) * 1.05) alpha:1];
+    UIColor *bottom = [UIColor colorWithHue:fmod(h + 0.04, 1) saturation:MIN(1, s * 1.1) brightness:MAX(b, 0.6) * 0.62 alpha:1];
+    UIGraphicsImageRenderer *r = [[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(side, side)];
+    UIImage *img = [r imageWithActions:^(UIGraphicsImageRendererContext *ctx) {
+        CGContextRef c = ctx.CGContext;
+        @try {
+            CGRect all = CGRectMake(0, 0, side, side);
+            UIBezierPath *tile = [UIBezierPath bezierPathWithRoundedRect:all cornerRadius:side * 0.27];
+            CGContextSaveGState(c);
+            [tile addClip];
+            linear(c, all, top, bottom, NO);
+            glow(c, CGPointMake(side * 0.25, side * 0.1), side * 0.7, UIColor.whiteColor, 0.28);
+            CGContextRestoreGState(c);
+            [[UIColor colorWithWhite:1 alpha:0.22] setStroke];
+            UIBezierPath *rim = [UIBezierPath bezierPathWithRoundedRect:CGRectInset(all, 0.5, 0.5) cornerRadius:side * 0.27 - 0.5];
+            rim.lineWidth = 1;
+            [rim stroke];
+            symbol(MRGAddonSymbol(addonID), CGRectInset(all, side * 0.24, side * 0.24), UIColor.whiteColor, UIFontWeightSemibold);
+        } @catch (NSException *e) {}
+    }];
+    if (img) [cache setObject:img forKey:key];
+    return img;
+}

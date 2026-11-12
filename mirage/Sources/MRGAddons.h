@@ -12,6 +12,10 @@ BOOL MRGAddonBuiltIn(NSString *addonID);                // this Mirage carries t
 NSArray<NSDictionary *> *MRGAddonIndex(void);           // last fetched index, else the built-in copy
 void MRGAddonRefresh(void (^done)(NSArray<NSDictionary *> *addons, NSString *error));
 UIViewController *MRGAddonShopPage(void);
+// For a row outside the shop: the add-on's short state ("45 RPM · Right"), whether it has settings, and its page.
+NSString *MRGAddonRowSummary(NSString *addonID);
+BOOL MRGAddonHasSettings(NSString *addonID);
+UIViewController *MRGAddonSettingsFor(NSString *addonID);
 
 // Vinyl (Now Playing): seconds per turn and which side the record peeks out on.
 double MRGVinylSecondsPerTurn(void);

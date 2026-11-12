@@ -13,6 +13,7 @@
 #import "MRGChatView.h"
 #import "MRGAddons.h"
 #import "Addons/MRGSaver.h"
+#import "Addons/MRGAddonArt.h"
 #import <PhotosUI/PhotosUI.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <objc/runtime.h>
@@ -22,7 +23,93 @@
 // and is registered as conforming at launch, or presented when the protocol is missing.
 static BOOL sg_pageConforms;
 
-typedef NS_ENUM(NSInteger, MRGSection) { MRGSecBackgrounds, MRGSecShop, MRGSecDJ, MRGSecSaver, MRGSecAbout, MRGSecCount };
+typedef NS_ENUM(NSInteger, MRGSection) { MRGSecAddons, MRGSecBackgrounds, MRGSecDJ, MRGSecShop, MRGSecSaver, MRGSecAbout, MRGSecCount };
+
+// The built-in add-ons in the shop's order: the rows of the main page's Add-ons section.
+static NSArray<NSDictionary *> *mainAddons(void) {
+    NSMutableArray *out = [NSMutableArray array];
+    for (NSDictionary *a in MRGAddonIndex()) if ([a[@"id"] isKindOfClass:NSString.class] && MRGAddonBuiltIn(a[@"id"])) [out addObject:a];
+    return out;
+}
+
+// One add-on on the main page: its icon, name and state, a switch, and a chevron into its settings.
+@interface MRGAddonRowCell : UITableViewCell
+@property (nonatomic, copy) NSString *addonID;
+@property (nonatomic, copy) void (^onToggle)(BOOL on);
+@property (nonatomic, readonly) UISwitch *toggle;
+- (void)fill:(NSDictionary *)addon;
+@end
+
+@implementation MRGAddonRowCell {
+    UIImageView *_icon, *_chevron;
+    UILabel *_name, *_detail;
+    UISwitch *_toggle;
+}
+- (instancetype)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)rid {
+    if (!(self = [super initWithStyle:UITableViewCellStyleDefault reuseIdentifier:rid])) return nil;
+    self.backgroundColor = [UIColor colorWithWhite:0.11 alpha:0.78];
+    UIView *sel = [UIView new];
+    sel.backgroundColor = [UIColor colorWithWhite:1 alpha:0.08];
+    self.selectedBackgroundView = sel;
+    _icon = [UIImageView new];
+    _icon.layer.shadowColor = UIColor.blackColor.CGColor;
+    _icon.layer.shadowOpacity = 0.3;
+    _icon.layer.shadowRadius = 4;
+    _icon.layer.shadowOffset = CGSizeMake(0, 2);
+    _name = [UILabel new];
+    _name.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
+    _name.textColor = UIColor.whiteColor;
+    _detail = [UILabel new];
+    _detail.font = [UIFont systemFontOfSize:13];
+    _detail.textColor = [UIColor colorWithWhite:1 alpha:0.5];
+    _toggle = [UISwitch new];
+    [_toggle addTarget:self action:@selector(flipped) forControlEvents:UIControlEventValueChanged];
+    _chevron = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"chevron.right" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:13 weight:UIImageSymbolWeightSemibold]]];
+    _chevron.tintColor = [UIColor colorWithWhite:1 alpha:0.35];
+    _chevron.contentMode = UIViewContentModeCenter;
+    for (UIView *v in @[_icon, _name, _detail, _toggle, _chevron]) [self.contentView addSubview:v];
+    return self;
+}
+- (UISwitch *)toggle { return _toggle; }
+- (void)fill:(NSDictionary *)a {
+    self.addonID = a[@"id"];
+    BOOL on = MRGAddonInstalled(self.addonID);
+    _icon.image = MRGAddonIcon(self.addonID, 36);
+    _icon.alpha = on ? 1 : 0.55;
+    _name.text = a[@"name"];
+    NSString *summary = on ? MRGAddonRowSummary(self.addonID) : nil;
+    NSString *category = [a[@"type"] isKindOfClass:NSString.class] ? a[@"type"] : nil;
+    _detail.text = on ? (summary.length ? summary : (category.length ? [category stringByAppendingString:@" · On"] : @"On")) : (category.length ? [category stringByAppendingString:@" · Off"] : @"Off");
+    _detail.textColor = on ? [MRGAccent() colorWithAlphaComponent:0.95] : [UIColor colorWithWhite:1 alpha:0.45];
+    _toggle.on = on;
+    _toggle.onTintColor = MRGAccent();
+    BOOL settings = MRGAddonHasSettings(self.addonID);
+    _chevron.hidden = !settings;
+    self.selectionStyle = settings ? UITableViewCellSelectionStyleDefault : UITableViewCellSelectionStyleNone;
+    self.accessibilityLabel = _name.text;
+    self.accessibilityValue = _detail.text;
+    self.accessibilityHint = settings ? @"Opens its settings" : nil;
+    [self setNeedsLayout];
+}
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    CGRect b = self.contentView.bounds;
+    CGFloat side = 36, x = 16;
+    _icon.frame = CGRectMake(x, (b.size.height - side) / 2, side, side);
+    CGFloat right = b.size.width - 12;
+    _chevron.frame = CGRectMake(right - 14, (b.size.height - 20) / 2, 14, 20);
+    if (!_chevron.hidden) right -= 14 + 10;
+    CGSize sw = _toggle.intrinsicContentSize;
+    _toggle.frame = CGRectMake(right - sw.width, (b.size.height - sw.height) / 2, sw.width, sw.height);
+    CGFloat tx = CGRectGetMaxX(_icon.frame) + 14, tw = MAX(0, CGRectGetMinX(_toggle.frame) - 10 - tx);
+    _name.frame = CGRectMake(tx, b.size.height / 2 - 20, tw, 21);
+    _detail.frame = CGRectMake(tx, b.size.height / 2 + 2, tw, 18);
+}
+- (void)flipped {
+    [[UISelectionFeedbackGenerator new] selectionChanged];
+    if (self.onToggle) self.onToggle(_toggle.on);
+}
+@end
 typedef NS_ENUM(NSInteger, MRGBgSection) { MRGBgPreview, MRGBgMedia, MRGBgLibrary, MRGBgLook, MRGBgScreens, MRGBgAssign, MRGBgCount };
 
 @interface MRGSettingsController : UITableViewController <PHPickerViewControllerDelegate, UIDocumentPickerDelegate>
@@ -113,6 +200,7 @@ static const CGFloat kBottomChrome = 150;
         return 0;
     }
     switch (s) {
+        case MRGSecAddons: return (NSInteger)mainAddons().count;
         case MRGSecBackgrounds: return 1;
         case MRGSecShop: return 1;
         case MRGSecDJ: return 1;
@@ -125,7 +213,7 @@ static const CGFloat kBottomChrome = 150;
 - (NSString *)tableView:(UITableView *)t titleForHeaderInSection:(NSInteger)s {
     if (self.djOnly) return s < (NSInteger)djGroupTitles().count ? djGroupTitles()[s] : nil;
     if (self.bgOnly) return @[@"Backgrounds", @"Media", @"Saved", @"Look", @"Show on", @"Per page"][s];
-    return @[@"Backgrounds", @"Add-on Shop", @"AI DJ", @"Settings", @"About"][s];
+    return @[@"Add-ons", @"Backgrounds", @"AI DJ", @"Add-on Shop", @"Settings", @"About"][s];
 }
 
 - (NSString *)tableView:(UITableView *)t titleForFooterInSection:(NSInteger)s {
@@ -153,6 +241,7 @@ static const CGFloat kBottomChrome = 150;
         return nil;
     }
     switch (s) {
+        case MRGSecAddons: return @"Turn any add-on on or off right here; the arrow opens its settings. Previews and descriptions are in the Add-on Shop.";
         case MRGSecBackgrounds: return @"Pictures, video and where they show live on the Backgrounds page. What you already set is kept.";
         case MRGSecSaver: return @"Every change saves itself right away. Here you can export or import all Mirage settings, or keep named presets on this iPhone. API keys are never included.";
         case MRGSecDJ:
@@ -164,6 +253,7 @@ static const CGFloat kBottomChrome = 150;
 
 - (CGFloat)tableView:(UITableView *)t heightForRowAtIndexPath:(NSIndexPath *)ip {
     if (self.djOnly) return 48;
+    if (!self.bgOnly && ip.section == MRGSecAddons) return 64;
     if (self.bgOnly && ip.section == MRGBgPreview && ip.row == 1) return MRGCurrentKind() == MRGMediaNone ? 52 : 200;
     if (self.bgOnly && ip.section == MRGBgLook && ip.row < 2) return 64;
     return 48;
@@ -510,6 +600,16 @@ static NSString *ip3(NSInteger row) { return row == 3 ? @"Voice" : row == 4 ? @"
         return baseCell();
     }
     switch (ip.section) {
+        case MRGSecAddons: {
+            NSArray *list = mainAddons();
+            MRGAddonRowCell *c = [t dequeueReusableCellWithIdentifier:@"mirage.addonrow"] ?: [[MRGAddonRowCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"mirage.addonrow"];
+            if (ip.row >= (NSInteger)list.count) return baseCell();
+            [c fill:list[ip.row]];
+            __weak MRGSettingsController *weak = self;
+            NSString *addonID = list[ip.row][@"id"];
+            c.onToggle = ^(BOOL on) { [weak setAddon:addonID on:on]; };
+            return c;
+        }
         case MRGSecBackgrounds: {
             UITableViewCell *c = [self actionCell:@"Backgrounds" symbol:@"photo.on.rectangle.angled" destructive:NO enabled:YES];
             NSUInteger n = MRGBackgroundLibrary().count;
@@ -585,10 +685,28 @@ static NSString *ip3(NSInteger row) { return row == 3 ? @"Voice" : row == 4 ? @"
         }
         return;
     }
+    if (ip.section == MRGSecAddons) {
+        NSArray *list = mainAddons();
+        if (ip.row < (NSInteger)list.count && MRGAddonHasSettings(list[ip.row][@"id"])) MRGPushPage(self, MRGAddonSettingsFor(list[ip.row][@"id"]));
+        return;
+    }
     if (ip.section == MRGSecBackgrounds) { MRGShowBackgroundSettings(self); return; }
     if (ip.section == MRGSecSaver) { MRGPushPage(self, MRGSaverPage()); return; }
     if (ip.section == MRGSecDJ) { MRGShowDJSettings(self); return; }
     if (ip.section == MRGSecShop) { MRGPushPage(self, MRGAddonShopPage()); return; }
+}
+
+// A switch on the main page: the same as the shop's, hooks included. The row updates after the switch has slid.
+- (void)setAddon:(NSString *)addonID on:(BOOL)on {
+    @try { MRGAddonSetInstalled(addonID, on); } @catch (NSException *e) { MRGDJLog(@"settings: switching %@ threw %@", addonID, e.reason); }
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if (self.djOnly || self.bgOnly || !self.isViewLoaded) return;
+        [UIView performWithoutAnimation:^{
+            @try { [self.tableView reloadSections:[NSIndexSet indexSetWithIndex:MRGSecAddons] withRowAnimation:UITableViewRowAnimationNone];
+                   [self.tableView reloadSections:[NSIndexSet indexSetWithIndex:MRGSecShop] withRowAnimation:UITableViewRowAnimationNone]; }
+            @catch (NSException *e) { [self.tableView reloadData]; }
+        }];
+    });
 }
 
 - (void)confirmRemoveBackground {

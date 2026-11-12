@@ -4,3 +4,8 @@
 
 UIImage *MRGAddonArt(NSString *addonID, CGSize size);
 BOOL MRGAddonHasArt(NSString *addonID);
+
+// The add-on's SF Symbol, and a small app-style icon tile of it (accent gradient, white symbol) for rows and
+// headers. `side` is the tile's width and height in points.
+NSString *MRGAddonSymbol(NSString *addonID);
+UIImage *MRGAddonIcon(NSString *addonID, CGFloat side);

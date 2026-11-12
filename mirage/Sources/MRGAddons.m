@@ -486,3 +486,16 @@ static BOOL addonHasSettings(NSDictionary *a) {
 @end
 
 UIViewController *MRGAddonShopPage(void) { return [MRGAddonShop new]; }
+
+NSString *MRGAddonRowSummary(NSString *addonID) { return addonID.length ? addonSummary(@{@"id": addonID}) : nil; }
+BOOL MRGAddonHasSettings(NSString *addonID) {
+    id<MRGAddon> addon = MRGAddonObject(addonID);
+    return addon && ([addon addonSettings].count > 0 || [addon respondsToSelector:@selector(addonSettingsController)]);
+}
+UIViewController *MRGAddonSettingsFor(NSString *addonID) {
+    id<MRGAddon> addon = MRGAddonObject(addonID);
+    if (!addon) return nil;
+    UIViewController *page = nil;
+    @try { page = [addon respondsToSelector:@selector(addonSettingsController)] ? [addon addonSettingsController] : nil; } @catch (NSException *e) {}
+    return page ?: MRGAddonSettingsPage(addon.addonID);
+}
