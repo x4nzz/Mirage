@@ -154,7 +154,7 @@ static const CGFloat kBottomChrome = 150;
     }
     switch (s) {
         case MRGSecBackgrounds: return @"Pictures, video and where they show live on the Backgrounds page. What you already set is kept.";
-        case MRGSecSaver: return @"Export or import every Mirage setting, or keep named presets on this iPhone. API keys are never included.";
+        case MRGSecSaver: return @"Every change saves itself right away. Here you can export or import all Mirage settings, or keep named presets on this iPhone. API keys are never included.";
         case MRGSecDJ:
             return @"Voice, personality, provider, chat and the DJ's other settings are on the AI DJ page. Bring your own key: OpenAI, Gemini (Google AI Studio keys, AQ.… or AIza…), Anthropic, OpenRouter, Groq, xAI, Perplexity, Cerebras, Fireworks, Together, DeepSeek or Mistral. The key stays in this phone's keychain. Privacy: only track and artist names (what's playing, what you played, the queue around it), what you type, and answers from your on-phone listening history that a chat question needs are sent to your provider. Voice: iPhone voices, your provider's voices, or ElevenLabs with its own key. On Spotify Free, Spotify may shuffle the set and its skip limit still applies.";
         case MRGSecAbout: return @"Mirage is free software under the GPL-3.0, built on Vitrine (github.com/meownyaaa/vitrine), itself a fork of Chroma by skopevoj (spoti.pw, up to v0.21.1).";
@@ -524,7 +524,7 @@ static NSString *ip3(NSInteger row) { return row == 3 ? @"Voice" : row == 4 ? @"
         case MRGSecShop: {
             UITableViewCell *c = [self actionCell:@"Add-on Shop" symbol:@"bag.fill" destructive:NO enabled:YES];
             NSUInteger n = MRGAddonsInstalledCount();
-            c.detailTextLabel.text = n ? [NSString stringWithFormat:@"%lu installed", (unsigned long)n] : @"Browse";
+            c.detailTextLabel.text = n ? [NSString stringWithFormat:@"%lu on", (unsigned long)n] : @"Browse";
             c.detailTextLabel.textColor = UIColor.grayColor;
             c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
             return c;
