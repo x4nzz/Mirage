@@ -1010,7 +1010,10 @@ static const NSInteger kCatalogMax = 80;
     // 0.6.7 root cause of "Start changes the song": every set was played with its first pick as a new context
     // (playSet → MRGPlayContextURI), which replaced the song on. Now, with a song playing, a set is queued after it and
     // the DJ talks over it; only a named song, playlist or album, or "now" / "skip" in the request, plays at once.
-    _afterCurrent = MRGNowPlaying() != nil && MRGPlayerIsPlaying() && !MRGDJWantsNow(request);
+    // 0.6.8 root cause of "Switch it up cuts the song off": the request it composes says "Playing right now: …",
+    // which MRGDJWantsNow read as the listener saying "right now". Mirage's own requests never ask to cut in.
+    BOOL ours = [request hasPrefix:@"Switch it up:"];
+    _afterCurrent = MRGNowPlaying() != nil && MRGPlayerIsPlaying() && (ours || !MRGDJWantsNow(request));
     _pendingAfter = NO;
     _waitingURI = nil;
     if (kind == 2 || kind == 3) { [self playNamed:songTitle album:kind == 3 request:request generation:gen]; return; }
@@ -1323,7 +1326,7 @@ static NSInteger intentOf(NSString *text) {
     // Only constraints like "underground" carry over; an earlier artist or vibe doesn't (it made Start replay Clairo).
     if (_origRequest.length && popularityCap(_origRequest)) [r appendFormat:@" Keep the hard constraints of their earlier request (like underground or an era): \"%@\".", _origRequest];
     NSDictionary *now = MRGNowPlaying();
-    if (now[@"artist"]) [r appendFormat:@" Playing right now: \"%@\" by %@; start from there.", now[@"title"] ?: @"?", now[@"artist"]];
+    if (now[@"artist"]) [r appendFormat:@" On at the moment: \"%@\" by %@; start from there.", now[@"title"] ?: @"?", now[@"artist"]];
     [self startWithRequest:r];
 }
 
