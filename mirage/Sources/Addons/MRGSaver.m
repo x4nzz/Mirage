@@ -25,6 +25,7 @@ static BOOL settingsKey(NSString *key) {
     if ([key containsString:@"history"] || [key containsString:@"userVoice"] || [key containsString:@".log"]) return NO;
     // Per-launch bookkeeping, not settings: a restored "launching" flag would turn that add-on off as if it crashed.
     if ([key hasSuffix:@".launching"] || [key hasSuffix:@".notice"] || [key hasSuffix:@".recent"]) return NO;
+    if ([key isEqualToString:@"mirage.saver.present"] || [key hasPrefix:@"mirage.safemode."]) return NO;
     return YES;
 }
 
@@ -130,41 +131,70 @@ static NSDictionary *currentPrefs(void) {
     return prefs;
 }
 
-static NSDictionary *sLastSaved;
-static BOOL sSaveQueued;
+static NSDictionary *sLastSaved;   // touched on sSaveQueue only
+static BOOL sSaveQueued;           // main thread only
+static NSString *const kPresent = @"mirage.saver.present";
 
-static void autosaveNow(void) {
+// The autosave runs on its own serial queue: reading every default (dictionaryRepresentation is all of Spotify's
+// preferences, not only Mirage's) and writing the file never happen on the main thread.
+static dispatch_queue_t saveQueue(void) {
+    static dispatch_queue_t q;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ q = dispatch_queue_create("mirage.autosave", dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_UTILITY, 0)); });
+    return q;
+}
+
+static void autosaveOnQueue(void) {
     @try {
-        [NSUserDefaults.standardUserDefaults synchronize];
         NSDictionary *prefs = currentPrefs();
         if (!prefs.count || [prefs isEqualToDictionary:sLastSaved ?: @{}]) return;
         if ([prefs writeToURL:autosaveURL() atomically:YES]) sLastSaved = prefs;
+        if (![NSUserDefaults.standardUserDefaults boolForKey:kPresent]) [NSUserDefaults.standardUserDefaults setBool:YES forKey:kPresent];
     } @catch (NSException *e) {
         MRGDJLog(@"settings: autosave threw %@", e.reason);
     }
 }
 
-static void autosaveSoon(void) {
-    if (sSaveQueued) return;
-    sSaveQueued = YES;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        sSaveQueued = NO;
-        autosaveNow();
+// Leaving the screen: saved now (on the queue), with a little background time so the write finishes.
+static void autosaveNow(void) {
+    UIApplication *app = UIApplication.sharedApplication;
+    __block UIBackgroundTaskIdentifier task = [app beginBackgroundTaskWithName:@"mirage.autosave" expirationHandler:^{
+        [app endBackgroundTask:task];
+        task = UIBackgroundTaskInvalid;
+    }];
+    dispatch_async(saveQueue(), ^{
+        autosaveOnQueue();
+        dispatch_async(dispatch_get_main_queue(), ^{ if (task != UIBackgroundTaskInvalid) { [app endBackgroundTask:task]; task = UIBackgroundTaskInvalid; } });
     });
 }
 
+// After a change: once things have been quiet for two seconds.
+static void autosaveSoon(void) {
+    if (sSaveQueued) return;
+    sSaveQueued = YES;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        sSaveQueued = NO;
+        dispatch_async(saveQueue(), ^{ autosaveOnQueue(); });
+    });
+}
+
+// Runs at load, before the add-ons start, so it has to be cheap: once an autosave has been made (kPresent is set)
+// the settings are known to be there and nothing else is read. Only with no marker and an autosave file on disk
+// (a reinstall that kept Documents) are the defaults scanned and the file read.
 static void autosaveRestore(void) {
     @try {
-        if (currentPrefs().count) return;   // settings are there: nothing to bring back
-        NSDictionary *saved = [NSDictionary dictionaryWithContentsOfURL:autosaveURL()];
-        if (![saved isKindOfClass:NSDictionary.class] || !saved.count) return;
         NSUserDefaults *d = NSUserDefaults.standardUserDefaults;
+        if ([d boolForKey:kPresent]) return;
+        NSURL *url = autosaveURL();
+        if (![NSFileManager.defaultManager fileExistsAtPath:url.path]) return;
+        if (currentPrefs().count) { [d setBool:YES forKey:kPresent]; return; }   // settings are there: nothing to bring back
+        NSDictionary *saved = [NSDictionary dictionaryWithContentsOfURL:url];
+        if (![saved isKindOfClass:NSDictionary.class] || !saved.count) return;
         __block NSUInteger n = 0;
         [saved enumerateKeysAndObjectsUsingBlock:^(id key, id obj, BOOL *stop) {
             if ([key isKindOfClass:NSString.class] && settingsKey(key) && plistValue(obj)) { [d setObject:obj forKey:key]; n++; }
         }];
-        [d synchronize];
-        sLastSaved = saved;
+        [d setBool:YES forKey:kPresent];
         MRGDJLog(@"settings: restored %lu settings from the autosave", (unsigned long)n);
     } @catch (NSException *e) {
         MRGDJLog(@"settings: autosave restore threw %@", e.reason);
@@ -176,10 +206,9 @@ __attribute__((constructor)) static void mrgAutosaveConstructor(void) {
     autosaveRestore();
     NSNotificationCenter *nc = NSNotificationCenter.defaultCenter;
     [nc addObserverForName:MRGSettingsChangedNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) { autosaveSoon(); }];
-    // Setters that don't announce themselves (the DJ's voice sliders, its persona) are caught here. Posted on whatever
-    // thread wrote the default; the save itself is coalesced on the main queue and skipped when nothing of Mirage's changed.
-    [nc addObserverForName:NSUserDefaultsDidChangeNotification object:NSUserDefaults.standardUserDefaults queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) { autosaveSoon(); }];
-    for (NSString *name in @[UIApplicationWillResignActiveNotification, UIApplicationDidEnterBackgroundNotification, UIApplicationWillTerminateNotification])
+    // Setters that don't announce themselves (the DJ's voice sliders, its persona) are saved when Spotify leaves the
+    // screen. (0.6.1-0.6.3 also listened to NSUserDefaultsDidChangeNotification, which Spotify posts all the time.)
+    for (NSString *name in @[UIApplicationWillResignActiveNotification, UIApplicationDidEnterBackgroundNotification])
         [nc addObserverForName:name object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) { autosaveNow(); }];
 }
 
