@@ -19,6 +19,15 @@
       "type": "Look",
       "author": "Mirage",
       "min_mirage": "0.6.0"
+    },
+    {
+      "id": "shuffle-plus",
+      "name": "Shuffle+",
+      "description": "Shuffle a playlist or album without playing the same artist twice in a row, and without starting on songs you just heard. Uses Spotify's own queue.",
+      "version": "1.0",
+      "type": "Playback",
+      "author": "Mirage",
+      "min_mirage": "0.6.0"
     }
   ]
 }

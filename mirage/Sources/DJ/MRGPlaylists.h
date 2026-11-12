@@ -20,6 +20,8 @@ void MRGPlaylistDelete(NSString *playlistURI, MRGPlaylistDone done);
 
 // The playlists in the listener's library (rootlist on spclient): uri, name, mine, tracks. Cached 10 minutes.
 void MRGPlaylistLibrary(void (^done)(NSArray<NSDictionary *> *playlists, NSString *error));
+// Tracks in a playlist you can edit: uri, title, artist, duration (seconds, when known), added (string or number, when known).
+void MRGPlaylistContents(NSString *playlistURI, void (^done)(NSArray<NSDictionary *> *tracks, NSString *error));
 // Playlists Mirage made (name, uri, created), newest first; kept on this phone.
 NSArray<NSDictionary *> *MRGPlaylistsMade(void);
 // A spotify:playlist: URI from a link or URI string, or nil.

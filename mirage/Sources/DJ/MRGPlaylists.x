@@ -474,3 +474,87 @@ void MRGPlaylistLibrary(void (^done)(NSArray<NSDictionary *> *playlists, NSStrin
         done(out, out.count ? nil : (error ?: @"Spotify sent no playlists."));
     });
 }
+
+static NSString *stringField(id obj) { return [obj isKindOfClass:NSString.class] && [obj length] ? obj : nil; }
+
+static NSDictionary *trackRecord(NSString *uri, NSString *title, NSString *artist, id duration, id added) {
+    if (![uri hasPrefix:@"spotify:track:"]) return nil;
+    NSMutableDictionary *d = [@{@"uri": uri} mutableCopy];
+    if (title.length) d[@"title"] = title;
+    if (artist.length) d[@"artist"] = artist;
+    if ([duration isKindOfClass:NSNumber.class]) {
+        double s = [duration doubleValue];
+        d[@"duration"] = @(s > 1000 ? s / 1000.0 : s);
+    }
+    if ([added isKindOfClass:NSString.class] || [added isKindOfClass:NSNumber.class]) d[@"added"] = added;
+    return d;
+}
+
+static NSArray<NSDictionary *> *tracksFromPlaylistJSON(id json) {
+    NSDictionary *root = [json isKindOfClass:NSDictionary.class] ? json : nil;
+    NSDictionary *contents = [root[@"contents"] isKindOfClass:NSDictionary.class] ? root[@"contents"] : root;
+    NSArray *items = [contents[@"items"] isKindOfClass:NSArray.class] ? contents[@"items"] : nil;
+    NSArray *meta = [contents[@"metaItems"] isKindOfClass:NSArray.class] ? contents[@"metaItems"] : nil;
+    if (!items) return nil;
+    NSMutableArray *out = [NSMutableArray array];
+    for (NSUInteger i = 0; i < items.count; i++) {
+        NSDictionary *it = [items[i] isKindOfClass:NSDictionary.class] ? items[i] : nil;
+        NSDictionary *m = (meta && i < meta.count && [meta[i] isKindOfClass:NSDictionary.class]) ? meta[i] : nil;
+        NSDictionary *attrs = [it[@"attributes"] isKindOfClass:NSDictionary.class] ? it[@"attributes"] : nil;
+        NSDictionary *metaAttrs = [m[@"attributes"] isKindOfClass:NSDictionary.class] ? m[@"attributes"] : nil;
+        NSString *uri = stringField(it[@"uri"]) ?: stringField(m[@"uri"]);
+        NSString *title = stringField(attrs[@"name"]) ?: stringField(metaAttrs[@"name"]) ?: stringField(it[@"name"]);
+        NSString *artist = stringField(attrs[@"artistName"]) ?: stringField(attrs[@"artist_name"]) ?: stringField(metaAttrs[@"artistName"]) ?: stringField(metaAttrs[@"artist_name"]);
+        id duration = attrs[@"durationMs"] ?: attrs[@"duration_ms"] ?: metaAttrs[@"durationMs"] ?: metaAttrs[@"duration_ms"] ?: attrs[@"length"];
+        id added = it[@"addedAt"] ?: it[@"added_at"] ?: attrs[@"addedAt"] ?: attrs[@"timestamp"] ?: metaAttrs[@"addedAt"] ?: metaAttrs[@"timestamp"];
+        NSDictionary *row = trackRecord(uri, title, artist, duration, added);
+        if (row) [out addObject:row];
+    }
+    return out;
+}
+
+static void webPlaylistPage(NSString *pid, NSString *url, NSMutableArray *into, NSInteger pagesLeft, void (^done)(NSArray *, NSString *)) {
+    NSString *auth = MRGSpotifyHeaders()[@"authorization"];
+    if (!auth) { done(into, @"Spotify hasn't signed a request yet."); return; }
+    NSString *full = url ?: [NSString stringWithFormat:@"https://api.spotify.com/v1/playlists/%@/tracks?limit=100&fields=items(added_at,track(uri,name,duration_ms,artists(name))),next", pid];
+    NSMutableURLRequest *r = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:full]];
+    [r setValue:auth forHTTPHeaderField:@"Authorization"];
+    [r setValue:@"application/json" forHTTPHeaderField:@"Accept"];
+    r.timeoutInterval = 20;
+    [[NSURLSession.sharedSession dataTaskWithRequest:r completionHandler:^(NSData *data, NSURLResponse *resp, NSError *error) {
+        NSInteger status = [resp isKindOfClass:NSHTTPURLResponse.class] ? ((NSHTTPURLResponse *)resp).statusCode : 0;
+        id json = data.length ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
+        NSArray *items = [json[@"items"] isKindOfClass:NSArray.class] ? json[@"items"] : nil;
+        for (NSDictionary *row in items) {
+            NSDictionary *tr = [row[@"track"] isKindOfClass:NSDictionary.class] ? row[@"track"] : nil;
+            NSString *artist = nil;
+            NSArray *artists = [tr[@"artists"] isKindOfClass:NSArray.class] ? tr[@"artists"] : nil;
+            if ([artists.firstObject isKindOfClass:NSDictionary.class]) artist = stringField(artists.firstObject[@"name"]);
+            NSDictionary *rec = trackRecord(stringField(tr[@"uri"]), stringField(tr[@"name"]), artist, tr[@"duration_ms"], row[@"added_at"]);
+            if (rec) [into addObject:rec];
+        }
+        NSString *next = stringField(json[@"next"]);
+        if (next.length && pagesLeft > 1 && status == 200) {
+            webPlaylistPage(pid, next, into, pagesLeft - 1, done);
+            return;
+        }
+        NSString *err = (status == 200 || into.count) ? nil : [NSString stringWithFormat:@"Spotify answered HTTP %ld.", (long)status];
+        dispatch_async(dispatch_get_main_queue(), ^{ done(into, into.count ? nil : err); });
+    }] resume];
+}
+
+void MRGPlaylistContents(NSString *playlistURI, void (^done)(NSArray<NSDictionary *> *, NSString *)) {
+    NSString *pid = nil;
+    if ([playlistURI hasPrefix:@"spotify:playlist:"]) pid = [playlistURI substringFromIndex:@"spotify:playlist:".length];
+    if (!pid.length || !done) { if (done) done(@[], @"That isn't a playlist."); return; }
+    NSString *path = [NSString stringWithFormat:@"/playlist/v2/playlist/%@?decorate=revision,attributes,length&from=0&length=500", pid];
+    spclient(@"GET", path, nil, ^(id json, NSInteger status, NSString *error) {
+        NSArray *rows = tracksFromPlaylistJSON(json);
+        if (rows.count) { MRGDJLog(@"playlists: read %lu tracks from %@", (unsigned long)rows.count, playlistURI); done(rows, nil); return; }
+        MRGDJLog(@"playlists: spclient contents empty (%@), trying the Web API", error ?: [NSString stringWithFormat:@"HTTP %ld", (long)status]);
+        webPlaylistPage(pid, nil, [NSMutableArray array], 5, ^(NSArray *web, NSString *webError) {
+            MRGDJLog(@"playlists: web contents %lu%@", (unsigned long)web.count, webError ? [@" — " stringByAppendingString:webError] : @"");
+            done(web, web.count ? nil : (webError ?: error ?: @"Spotify sent no tracks."));
+        });
+    });
+}
