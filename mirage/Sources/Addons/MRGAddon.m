@@ -3,6 +3,7 @@
 #import "MRGPrefs.h"
 #import "MRGSafe.h"
 #import "MRGDJLog.h"
+#import "MRGDiagnostics.h"
 
 static NSMutableArray<id<MRGAddon>> *sAddons;
 static NSString *sHeaderTitle;
@@ -160,34 +161,24 @@ void MRGAddonRunDisable(NSString *addonID) {
     @catch (NSException *e) { MRGDJLog(@"addons: %@ disable threw %@", addonID, e.reason); }
 }
 
+// Each add-on's flag is up only while its own enable hook runs, so a crash inside one start-up blames that add-on
+// and nobody else. Before, every installed add-on stayed flagged for the first 12 seconds and any crash in that
+// window (Spotify's own included) turned them all off with a crash notice. Crashes after start-up are handled by
+// safe mode (MRGDiagnostics.m): two launches in a row that die early start the next one with add-ons off.
 static void launchAddons(void) {
     for (id<MRGAddon> addon in MRGRegisteredAddons()) {
-        if (!MRGAddonInstalled(addon.addonID)) { [D() removeObjectForKey:launchKey(addon.addonID)]; continue; }
-        if ([D() boolForKey:launchKey(addon.addonID)]) {
-            failAddon(addon, @"This add-on crashed the last time Spotify opened, so it was turned off. Turn it back on to try again.");
+        NSString *flag = launchKey(addon.addonID);
+        if (!MRGAddonInstalled(addon.addonID)) { if ([D() objectForKey:flag]) [D() removeObjectForKey:flag]; continue; }
+        if ([D() boolForKey:flag]) {
+            MRGCrumb(@"%@ crashed while starting last time, turned off", addon.addonID);
+            failAddon(addon, @"This add-on crashed while starting the last time Spotify opened, so it was turned off. Turn it back on to try again.");
             continue;
         }
-        [D() setBool:YES forKey:launchKey(addon.addonID)];
-        [D() synchronize];
+        [D() setBool:YES forKey:flag];
+        MRGCrumb(@"enable %@", addon.addonID);
         MRGAddonRunEnable(addon.addonID);
+        [D() removeObjectForKey:flag];
     }
-    // Still set once Spotify has been up for a few seconds: a crash in those first seconds counts as a
-    // launch crash. Later crashes (a song the next day) do not turn the add-on off.
-    void (^survived)(void) = ^{
-        for (id<MRGAddon> addon in MRGRegisteredAddons()) [D() removeObjectForKey:launchKey(addon.addonID)];
-        [D() synchronize];
-    };
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(12 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        if (UIApplication.sharedApplication.applicationState == UIApplicationStateBackground) return;
-        survived();
-    });
-    // Leaving Spotify within those seconds is not a crash either. Before, switching apps quickly left the flags set,
-    // and the next launch turned every add-on off as if it had crashed.
-    __block id token = [NSNotificationCenter.defaultCenter addObserverForName:UIApplicationDidEnterBackgroundNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
-        survived();
-        if (token) [NSNotificationCenter.defaultCenter removeObserver:token];
-        token = nil;
-    }];
 }
 
 BOOL MRGEffectsPaused(void) {
@@ -367,6 +358,25 @@ UIViewController *MRGAddonSettingsPage(NSString *addonID) {
     return page;
 }
 
+// The add-ons start once Spotify has drawn its first frame (a moment after it finishes launching), not on the main
+// queue's first turn: their enable hooks walk windows, read caches and start lookups, and none of that should stand
+// between the launch and the first frame. Safe mode (MRGDiagnostics.m) skips them all.
+static void startAddonsOnce(void) {
+    static BOOL started;
+    if (started) return;
+    started = YES;
+    @try {
+        if (MRGSafeModeActive()) { MRGSafeModeTurnOffAddons(); return; }
+        launchAddons();
+    } @catch (NSException *e) { MRGCrumb(@"launch add-ons threw %@", e.reason); }
+}
+
 __attribute__((constructor)) static void mrgAddonConstructor(void) {
-    dispatch_async(dispatch_get_main_queue(), ^{ launchAddons(); });
+    __block id token = [NSNotificationCenter.defaultCenter addObserverForName:UIApplicationDidFinishLaunchingNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
+        if (token) [NSNotificationCenter.defaultCenter removeObserver:token];
+        token = nil;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ startAddonsOnce(); });
+    }];
+    // Loaded after launch had already finished (no notification coming): start shortly anyway.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ startAddonsOnce(); });
 }

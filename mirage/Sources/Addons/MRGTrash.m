@@ -5,6 +5,7 @@
 #import "MRGPrefs.h"
 #import "MRGSafe.h"
 #import "MRGDJLog.h"
+#import "MRGDiagnostics.h"
 
 static NSString *const kAddon = @"trash";
 static NSMutableArray<NSDictionary *> *sItems;
@@ -108,6 +109,7 @@ static void skipIfTrashed(NSDictionary *track) {
         return;
     }
     MRGDJLog(@"trash: skipping %@", track[@"title"] ?: track[@"uri"]);
+    MRGCrumb(@"trash skip %@", track[@"uri"]);
     MRGPlayerControl(@"next", nil);
 }
 

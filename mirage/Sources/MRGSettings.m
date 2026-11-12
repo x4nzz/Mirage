@@ -15,6 +15,7 @@
 #import "Addons/MRGSaver.h"
 #import "Addons/MRGAddonArt.h"
 #import "MRGIntegrity.h"
+#import "MRGDiagnostics.h"
 #import <PhotosUI/PhotosUI.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <objc/runtime.h>
@@ -25,6 +26,15 @@
 static BOOL sg_pageConforms;
 
 typedef NS_ENUM(NSInteger, MRGSection) { MRGSecAddons, MRGSecBackgrounds, MRGSecDJ, MRGSecShop, MRGSecSaver, MRGSecAbout, MRGSecCount };
+
+// About's rows, in order; the duplicate and safe-mode rows only when there is something to say.
+static NSArray<NSString *> *aboutRows(void) {
+    NSMutableArray *r = [@[@"version", @"image", @"vitrine"] mutableCopy];
+    if (MRGDuplicateSummary()) [r addObject:@"dup"];
+    if (MRGSafeModeActive() || MRGSafeModeNote()) [r addObject:@"safe"];
+    [r addObject:@"share"];
+    return r;
+}
 
 // The built-in add-ons in the shop's order: the rows of the main page's Add-ons section.
 static NSArray<NSDictionary *> *mainAddons(void) {
@@ -207,7 +217,7 @@ static const CGFloat kBottomChrome = 150;
         case MRGSecShop: return 1;
         case MRGSecDJ: return 1;
         case MRGSecSaver: return 1;
-        case MRGSecAbout: return MRGDuplicateSummary() ? 4 : 3;
+        case MRGSecAbout: return (NSInteger)aboutRows().count;
     }
     return 0;
 }
@@ -738,20 +748,31 @@ static NSString *ip3(NSInteger row) { return row == 3 ? @"Voice" : row == 4 ? @"
             return c;
         }
         case MRGSecAbout: {
+            NSArray *rows = aboutRows();
+            NSString *row = ip.row < (NSInteger)rows.count ? rows[ip.row] : @"";
+            if ([row isEqualToString:@"share"]) {
+                UITableViewCell *c = [self actionCell:@"Share diagnostics" symbol:@"stethoscope" destructive:NO enabled:YES];
+                c.detailTextLabel.text = @"No keys";
+                c.detailTextLabel.textColor = UIColor.grayColor;
+                return c;
+            }
             UITableViewCell *c = baseCell();
             NSString *uuid = MRGImageUUID();
-            NSArray *titles = @[@"Version", @"Running from", @"Vitrine", @"Another Mirage"];
-            NSArray *values = @[MRGVersionLine(),
-                                [NSString stringWithFormat:@"%@ · %@", MRGImagePath().lastPathComponent, uuid.length >= 8 ? [uuid substringToIndex:8] : @"?"],
-                                NSClassFromString(@"SGModSettingsRow") ? @"Loaded" : @"Not loaded",
-                                MRGDuplicateSummary() ?: @""];
-            if (ip.row >= (NSInteger)titles.count) return c;
-            c.textLabel.text = titles[ip.row];
             c.detailTextLabel.adjustsFontSizeToFitWidth = YES;
             c.detailTextLabel.minimumScaleFactor = 0.6;
-            c.detailTextLabel.text = values[ip.row];
-            c.detailTextLabel.textColor = ip.row == 3 ? UIColor.systemRedColor : UIColor.grayColor;
-            if (ip.row == 3) c.textLabel.textColor = UIColor.systemRedColor;
+            c.detailTextLabel.textColor = UIColor.grayColor;
+            if ([row isEqualToString:@"version"]) { c.textLabel.text = @"Version"; c.detailTextLabel.text = MRGVersionLine(); }
+            else if ([row isEqualToString:@"image"]) { c.textLabel.text = @"Running from"; c.detailTextLabel.text = [NSString stringWithFormat:@"%@ · %@", MRGImagePath().lastPathComponent, uuid.length >= 8 ? [uuid substringToIndex:8] : @"?"]; }
+            else if ([row isEqualToString:@"vitrine"]) { c.textLabel.text = @"Vitrine"; c.detailTextLabel.text = NSClassFromString(@"SGModSettingsRow") ? @"Loaded" : @"Not loaded"; }
+            else if ([row isEqualToString:@"dup"]) {
+                c.textLabel.text = @"Another Mirage"; c.detailTextLabel.text = MRGDuplicateSummary() ?: @"";
+                c.textLabel.textColor = c.detailTextLabel.textColor = UIColor.systemOrangeColor;
+            } else if ([row isEqualToString:@"safe"]) {
+                c.textLabel.text = @"Safe mode";
+                c.detailTextLabel.text = MRGSafeModeActive() ? @"On this launch · tap" : @"Add-ons were turned off · tap";
+                c.textLabel.textColor = c.detailTextLabel.textColor = UIColor.systemOrangeColor;
+                c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+            }
             return c;
         }
     }
@@ -793,10 +814,29 @@ static NSString *ip3(NSInteger row) { return row == 3 ? @"Voice" : row == 4 ? @"
         if (ip.row < (NSInteger)list.count && MRGAddonHasSettings(list[ip.row][@"id"])) MRGPushPage(self, MRGAddonSettingsFor(list[ip.row][@"id"]));
         return;
     }
+    if (ip.section == MRGSecAbout) {
+        NSArray *rows = aboutRows();
+        NSString *row = ip.row < (NSInteger)rows.count ? rows[ip.row] : @"";
+        if ([row isEqualToString:@"share"]) MRGShareDiagnostics(self, [t cellForRowAtIndexPath:ip]);
+        else if ([row isEqualToString:@"safe"]) [self safeModeSheet];
+        return;
+    }
     if (ip.section == MRGSecBackgrounds) { MRGShowBackgroundSettings(self); return; }
     if (ip.section == MRGSecSaver) { MRGPushPage(self, MRGSaverPage()); return; }
     if (ip.section == MRGSecDJ) { MRGShowDJSettings(self); return; }
     if (ip.section == MRGSecShop) { MRGPushPage(self, MRGAddonShopPage()); return; }
+}
+
+- (void)safeModeSheet {
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:@"Safe mode" message:MRGSafeModeNote() ?: @"Spotify closed while starting twice in a row, so Mirage turned its add-ons off." preferredStyle:UIAlertControllerStyleAlert];
+    [a addAction:[UIAlertAction actionWithTitle:@"Turn them back on" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) { MRGSafeModeRestore(); [self.tableView reloadData]; }]];
+    [a addAction:[UIAlertAction actionWithTitle:@"Keep them off, hide this" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) {
+        [NSUserDefaults.standardUserDefaults removeObjectForKey:@"mirage.safemode.at"];
+        [NSUserDefaults.standardUserDefaults removeObjectForKey:@"mirage.safemode.disabled"];
+        [self.tableView reloadData];
+    }]];
+    [a addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:a animated:YES completion:nil];
 }
 
 // A switch on the main page: the same as the shop's, hooks included. The row updates after the switch has slid.

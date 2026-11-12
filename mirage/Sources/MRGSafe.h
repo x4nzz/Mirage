@@ -1,5 +1,6 @@
 #import <UIKit/UIKit.h>
 #import <os/log.h>
+#import "MRGDiagnostics.h"
 
 // One bad settings row must never take Spotify down: every Mirage cell builder runs through this, and a builder that
 // throws gets a plain "—" row instead (the exception is logged).
@@ -30,5 +31,6 @@ static inline NSInteger MRGSafeCount(NSInteger (^build)(void)) {
 static inline void MRGSafeRun(const char *where, void (^work)(void)) {
     @try { work(); } @catch (NSException *e) {
         os_log_error(OS_LOG_DEFAULT, "[Mirage] %{public}s threw %{public}@: %{public}@", where, e.name, e.reason);
+        MRGCrumb(@"%s threw %@: %@", where, e.name, e.reason);
     }
 }
