@@ -11,4 +11,6 @@
 // Stops and hands over the best transcript (maybe empty), main queue.
 - (void)finish:(void (^)(NSString *text))done;
 - (void)cancel;
+// 0.6.8: makes the recognizer ahead (off the main thread), so holding the mic starts without a hitch.
+- (void)prewarm;
 @end

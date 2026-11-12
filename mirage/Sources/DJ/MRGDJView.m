@@ -350,6 +350,7 @@ static UILabel *makeLabel(CGFloat size, UIFontWeight w, UIColor *color, NSIntege
     UIButton *_go, *_stop;
     UITextField *_field;
     UIButton *_send, *_mic;
+    BOOL _micFailed;
     UIControl *_voiceBox;          // 0.6.7: what was heard, sent after 3 s unless tapped to edit
     UILabel *_voiceText, *_voiceHint;
     UIView *_voiceBar;
@@ -367,6 +368,7 @@ static UILabel *makeLabel(CGFloat size, UIFontWeight w, UIColor *color, NSIntege
 }
 
 - (void)viewDidLoad {
+    [MRGDJListener.shared prewarm];   // the recognizer is made now, off the main thread, not when the mic is held
     [super viewDidLoad];
     self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
     self.view.backgroundColor = UIColor.clearColor;
@@ -650,6 +652,7 @@ static UILabel *makeLabel(CGFloat size, UIFontWeight w, UIColor *color, NSIntege
     [[UIImpactFeedbackGenerator new] impactOccurred];
     _mic.tintColor = kGreen();
     [self showVoice:@"Listening…" hint:@"Let go when you're done"];
+    _micFailed = NO;
     __weak MRGDJSheet *weak = self;
     [MRGDJListener.shared startWithPartial:^(NSString *text) {
         MRGDJSheet *s = weak;
@@ -657,14 +660,17 @@ static UILabel *makeLabel(CGFloat size, UIFontWeight w, UIColor *color, NSIntege
     } failed:^(NSString *why) {
         MRGDJSheet *s = weak;
         if (!s) return;
+        s->_micFailed = YES;
         s->_mic.tintColor = UIColor.whiteColor;
         [s showVoice:why hint:@"Tap to type instead"];
     }];
 }
 
 - (void)micUp {
-    if (!MRGDJListener.shared.isListening) { _mic.tintColor = UIColor.whiteColor; return; }
+    // The mic starts off the main thread, so it may still be starting when the finger lifts: finish is queued behind
+    // the start either way. A start that failed has shown its reason already.
     _mic.tintColor = UIColor.whiteColor;
+    if (_micFailed) return;
     _voiceHint.text = @"Getting that…";
     __weak MRGDJSheet *weak = self;
     [MRGDJListener.shared finish:^(NSString *text) {

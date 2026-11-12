@@ -3,8 +3,14 @@
 #import "MRGDJLog.h"
 #import <Speech/Speech.h>
 #import <AVFoundation/AVFoundation.h>
+#import <stdatomic.h>
 
+// 0.6.8 root cause of the mic freezing for about a second: everything ran on the main thread when the mic was held:
+// a new SFSpeechRecognizer, the audio session's switch to play-and-record (which waits on the audio server), a new
+// AVAudioEngine, its input node and its start. Now that work runs on a queue of its own, the recognizer is made once
+// and kept (prewarm makes it ahead, when the DJ sheet opens), and the main thread only gets the transcript.
 @implementation MRGDJListener {
+    dispatch_queue_t _q;                         // everything below is touched on _q only
     SFSpeechRecognizer *_recognizer;
     SFSpeechAudioBufferRecognitionRequest *_request;
     SFSpeechRecognitionTask *_task;
@@ -14,12 +20,12 @@
     void (^_done)(NSString *);
     BOOL _tapped;
     BOOL _ducked;
-    // The session as Spotify had it, put back after.
     AVAudioSessionCategory _oldCategory;
     AVAudioSessionMode _oldMode;
     AVAudioSessionCategoryOptions _oldOptions;
     BOOL _changedSession;
     NSUInteger _token;
+    atomic_bool _listening;                      // read from any thread
 }
 
 + (instancetype)shared {
@@ -29,12 +35,36 @@
     return l;
 }
 
-- (BOOL)isListening { return _engine.isRunning; }
+- (instancetype)init {
+    if (!(self = [super init])) return nil;
+    _q = dispatch_queue_create("mirage.dj.listen", DISPATCH_QUEUE_SERIAL);
+    atomic_store(&_listening, false);
+    return self;
+}
+
+- (BOOL)isListening { return atomic_load(&_listening); }
 
 static void onMain(void (^b)(void)) { if (NSThread.isMainThread) b(); else dispatch_async(dispatch_get_main_queue(), b); }
 
+- (SFSpeechRecognizer *)recognizerOnQueue {
+    if (_recognizer) return _recognizer;
+    _recognizer = [[SFSpeechRecognizer alloc] initWithLocale:NSLocale.currentLocale] ?: [[SFSpeechRecognizer alloc] initWithLocale:[NSLocale localeWithLocaleIdentifier:@"en-US"]];
+    return _recognizer;
+}
+
+- (void)prewarm {
+    if ([SFSpeechRecognizer authorizationStatus] != SFSpeechRecognizerAuthorizationStatusAuthorized) return;
+    dispatch_async(_q, ^{
+        @try {
+            SFSpeechRecognizer *r = [self recognizerOnQueue];
+            (void)r.isAvailable;
+            (void)r.supportsOnDeviceRecognition;
+        } @catch (NSException *e) {}
+    });
+}
+
 // Both permissions, asked once each. YES in `ready` only when both are granted now; a first grant still answers NO
-// (the hold is over by the time the alerts are answered) with a note to hold again.
+// (the hold is over by the time the alerts are answered) with a note to hold again. Main queue.
 - (void)permissions:(void (^)(BOOL ready, NSString *why))done {
     SFSpeechRecognizerAuthorizationStatus speech = [SFSpeechRecognizer authorizationStatus];
     if (speech == SFSpeechRecognizerAuthorizationStatusDenied || speech == SFSpeechRecognizerAuthorizationStatusRestricted) {
@@ -45,6 +75,7 @@ static void onMain(void (^b)(void)) { if (NSThread.isMainThread) b(); else dispa
         [SFSpeechRecognizer requestAuthorization:^(SFSpeechRecognizerAuthorizationStatus s) {
             onMain(^{
                 if (s != SFSpeechRecognizerAuthorizationStatusAuthorized) { done(NO, @"Speech recognition wasn't allowed, so the mic can't hear you. You can type instead."); return; }
+                [self prewarm];
                 [self permissions:^(BOOL ready, NSString *why) { done(NO, why ?: @"All set. Hold the mic again and talk."); }];
             });
         }];
@@ -62,20 +93,22 @@ static void onMain(void (^b)(void)) { if (NSThread.isMainThread) b(); else dispa
 }
 
 - (void)startWithPartial:(void (^)(NSString *))partial failed:(void (^)(NSString *))failed {
-    [self cancel];
-    NSUInteger token = ++_token;
+    void (^p)(NSString *) = [partial copy], (^f)(NSString *) = [failed copy];
     [self permissions:^(BOOL ready, NSString *why) {
-        if (token != self->_token) return;
-        if (!ready) { failed(why ?: @"The mic isn't available right now."); return; }
-        NSString *err = [self begin:partial];
-        if (err) { [self teardown]; failed(err); }
+        if (!ready) { if (f) f(why ?: @"The mic isn't available right now."); return; }
+        dispatch_async(self->_q, ^{
+            [self teardownOnQueue];
+            NSString *err = [self beginOnQueue:p];
+            if (err) { [self teardownOnQueue]; onMain(^{ if (f) f(err); }); }
+        });
     }];
 }
 
-- (NSString *)begin:(void (^)(NSString *))partial {
+- (NSString *)beginOnQueue:(void (^)(NSString *))partial {
     @try {
-        _recognizer = [[SFSpeechRecognizer alloc] initWithLocale:NSLocale.currentLocale] ?: [[SFSpeechRecognizer alloc] initWithLocale:[NSLocale localeWithLocaleIdentifier:@"en-US"]];
-        if (!_recognizer.isAvailable) return @"Speech recognition isn't available right now (it may need a connection on this phone).";
+        NSUInteger token = ++_token;
+        SFSpeechRecognizer *recognizer = [self recognizerOnQueue];
+        if (!recognizer.isAvailable) return @"Speech recognition isn't available right now (it may need a connection on this phone).";
         AVAudioSession *session = AVAudioSession.sharedInstance;
         _oldCategory = session.category; _oldMode = session.mode; _oldOptions = session.categoryOptions;
         _changedSession = NO;
@@ -94,29 +127,32 @@ static void onMain(void (^b)(void)) { if (NSThread.isMainThread) b(); else dispa
         _request = [SFSpeechAudioBufferRecognitionRequest new];
         _request.shouldReportPartialResults = YES;
         _request.taskHint = SFSpeechRecognitionTaskHintSearch;
-        if (_recognizer.supportsOnDeviceRecognition) _request.requiresOnDeviceRecognition = YES;   // stays on the phone
+        if (recognizer.supportsOnDeviceRecognition) _request.requiresOnDeviceRecognition = YES;   // stays on the phone
         if (@available(iOS 16.0, *)) _request.addsPunctuation = NO;
         _best = @"";
         _partial = [partial copy];
         SFSpeechAudioBufferRecognitionRequest *req = _request;
         [input installTapOnBus:0 bufferSize:1024 format:format block:^(AVAudioPCMBuffer *buffer, AVAudioTime *when) { [req appendAudioPCMBuffer:buffer]; }];
         _tapped = YES;
-        NSUInteger token = _token;
         __weak MRGDJListener *weak = self;
-        _task = [_recognizer recognitionTaskWithRequest:_request resultHandler:^(SFSpeechRecognitionResult *result, NSError *error) {
-            onMain(^{
-                MRGDJListener *s = weak;
-                if (!s || token != s->_token) return;
-                if (result) {
-                    s->_best = result.bestTranscription.formattedString ?: s->_best;
-                    if (s->_partial) s->_partial(s->_best);
-                }
-                if (error || result.isFinal) [s deliver];
+        _task = [recognizer recognitionTaskWithRequest:_request resultHandler:^(SFSpeechRecognitionResult *result, NSError *error) {
+            NSString *text = result.bestTranscription.formattedString;
+            BOOL final = error != nil || result.isFinal;
+            MRGDJListener *s = weak;
+            if (!s) return;
+            dispatch_async(s->_q, ^{
+                if (token != s->_token) return;
+                if (text) s->_best = text;
+                void (^p)(NSString *) = s->_partial;
+                NSString *best = s->_best;
+                if (text && p) onMain(^{ p(best); });
+                if (final) [s deliverOnQueue];
             });
         }];
         [_engine prepare];
         NSError *e = nil;
         if (![_engine startAndReturnError:&e]) return [@"The mic couldn't start: " stringByAppendingString:e.localizedDescription ?: @"?"];
+        atomic_store(&_listening, true);
         _ducked = MRGDuckHold(@"mic", ^BOOL { return MRGDJListener.shared.isListening; });
         MRGDJLog(@"voice in: listening (%@)", _request.requiresOnDeviceRecognition ? @"on the phone" : @"Apple's speech service");
         return nil;
@@ -126,29 +162,33 @@ static void onMain(void (^b)(void)) { if (NSThread.isMainThread) b(); else dispa
 }
 
 - (void)finish:(void (^)(NSString *))done {
-    if (!_engine) { if (done) done(_best ?: @""); return; }
-    _done = [done copy];
-    @try {
-        [_engine stop];
-        if (_tapped) { [_engine.inputNode removeTapOnBus:0]; _tapped = NO; }
-        [_request endAudio];
-    } @catch (NSException *x) {}
-    [self restoreAudio];
-    // The final result usually follows within a moment; past 1.5 s the best partial is used.
-    NSUInteger token = _token;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ if (token == self->_token) [self deliver]; });
+    void (^d)(NSString *) = [done copy];
+    dispatch_async(_q, ^{
+        if (!self->_engine) { NSString *b = self->_best ?: @""; onMain(^{ if (d) d(b); }); return; }
+        self->_done = d;
+        @try {
+            [self->_engine stop];
+            if (self->_tapped) { [self->_engine.inputNode removeTapOnBus:0]; self->_tapped = NO; }
+            [self->_request endAudio];
+        } @catch (NSException *x) {}
+        atomic_store(&self->_listening, false);
+        [self restoreAudioOnQueue];
+        // The final result usually follows within a moment; past 1.5 s the best partial is used.
+        NSUInteger token = self->_token;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), self->_q, ^{ if (token == self->_token) [self deliverOnQueue]; });
+    });
 }
 
-- (void)deliver {
+- (void)deliverOnQueue {
     void (^done)(NSString *) = _done;
     if (!done && _engine.isRunning) return;   // still holding: an error mid-way is reported when they let go
     _done = nil;
     NSString *text = [_best stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet] ?: @"";
-    [self teardown];
-    if (done) done(text);
+    [self teardownOnQueue];
+    if (done) onMain(^{ done(text); });
 }
 
-- (void)restoreAudio {
+- (void)restoreAudioOnQueue {
     if (_ducked) { MRGDuckRelease(@"mic"); _ducked = NO; }
     if (_changedSession) {
         _changedSession = NO;
@@ -156,7 +196,7 @@ static void onMain(void (^b)(void)) { if (NSThread.isMainThread) b(); else dispa
     }
 }
 
-- (void)teardown {
+- (void)teardownOnQueue {
     _token++;
     @try {
         if (_engine.isRunning) [_engine stop];
@@ -164,8 +204,9 @@ static void onMain(void (^b)(void)) { if (NSThread.isMainThread) b(); else dispa
         [_task cancel];
     } @catch (NSException *x) {}
     _task = nil; _request = nil; _engine = nil; _partial = nil;
-    [self restoreAudio];
+    atomic_store(&_listening, false);
+    [self restoreAudioOnQueue];
 }
 
-- (void)cancel { _done = nil; [self teardown]; }
+- (void)cancel { dispatch_async(_q, ^{ self->_done = nil; [self teardownOnQueue]; }); }
 @end
