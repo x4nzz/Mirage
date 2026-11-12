@@ -117,7 +117,8 @@ static void resolve(NSDictionary *now) {
         for (id g in genres) if ([g isKindOfClass:NSString.class]) [clean addObject:g];
         sCache[key] = clean;
         if (sCache.count > 200) [sCache removeObjectForKey:sCache.allKeys.firstObject];
-        [sCache writeToURL:cacheURL() atomically:YES];
+        NSDictionary *snapshot = [sCache copy];
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{ [snapshot writeToURL:cacheURL() atomically:YES]; });
         MRGDJLog(@"genres: %@ → %@ (Web API artist, cached)", artist ?: key, joinGenres(clean) ?: @"none");
         // The song may have changed while the lookup ran: the answer is kept, but only shown for its own song.
         NSString *playing = MRGNowPlaying()[@"uri"];
