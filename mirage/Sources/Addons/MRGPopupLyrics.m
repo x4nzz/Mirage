@@ -117,8 +117,43 @@ static BOOL openPlayer(UIView *from) {
 - (void)changed;
 @end
 
+// The card's material. Vitrine's own glass when it is loaded (the same effect its redesign uses, so the card matches
+// the rest of the app), else UIGlassEffect on iOS 26, else an ultra-thin dark material blur. `liquid` says whether
+// the result is real glass (it shapes itself with a corner configuration and needs no border).
+static UIVisualEffect *glassEffect(BOOL *liquid) {
+    Class glass = NSClassFromString(@"UIGlassEffect");
+    BOOL haveGlass = [glass respondsToSelector:@selector(effectWithStyle:)];
+    UIVisualEffect *(*vitrine)(void) = (UIVisualEffect *(*)(void))dlsym(RTLD_DEFAULT, "SGGlassEffect");
+    UIVisualEffect *e = nil;
+    if (vitrine && haveGlass) { @try { e = vitrine(); } @catch (NSException *x) {} }
+    if (![e isKindOfClass:UIVisualEffect.class] && haveGlass) {
+        @try { e = ((id (*)(id, SEL, NSInteger))objc_msgSend)(glass, @selector(effectWithStyle:), 0); } @catch (NSException *x) { e = nil; }
+    }
+    if ([e isKindOfClass:UIVisualEffect.class] && glass && [e isKindOfClass:glass]) {
+        if (liquid) *liquid = YES;
+        return e;
+    }
+    if (liquid) *liquid = NO;
+    return [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterialDark];
+}
+
+static void shapeGlass(UIVisualEffectView *v, CGFloat radius) {
+    void (*vitrine)(UIView *, CGFloat, BOOL) = (void (*)(UIView *, CGFloat, BOOL))dlsym(RTLD_DEFAULT, "SGShapeGlass");
+    if (vitrine) { @try { vitrine(v, radius, NO); return; } @catch (NSException *x) {} }
+    Class config = NSClassFromString(@"UICornerConfiguration"), corner = NSClassFromString(@"UICornerRadius");
+    if ([v respondsToSelector:@selector(setCornerConfiguration:)] && [config respondsToSelector:@selector(configurationWithUniformRadius:)] && [corner respondsToSelector:@selector(fixedRadius:)]) {
+        @try {
+            id r = ((id (*)(id, SEL, CGFloat))objc_msgSend)(corner, @selector(fixedRadius:), radius);
+            id shape = r ? ((id (*)(id, SEL, id))objc_msgSend)(config, @selector(configurationWithUniformRadius:), r) : nil;
+            if (shape) { ((void (*)(id, SEL, id))objc_msgSend)(v, @selector(setCornerConfiguration:), shape); return; }
+        } @catch (NSException *x) {}
+    }
+    v.layer.cornerRadius = radius;
+}
+
 @implementation MRGLyricsShelf {
     UIVisualEffectView *_glass;
+    BOOL _liquid;          // UIGlassEffect (iOS 26), else a thin material blur
     CAGradientLayer *_tint, *_fade;
     UIImageView *_icon;
     UILabel *_kicker, *_song;
@@ -139,20 +174,25 @@ static BOOL openPlayer(UIView *from) {
     _labels = [NSMutableArray array];
     self.layer.cornerRadius = 22;
     self.layer.cornerCurve = kCACornerCurveContinuous;
-    self.layer.shadowColor = UIColor.blackColor.CGColor;
-    self.layer.shadowOpacity = 0.35;
-    self.layer.shadowRadius = 16;
-    self.layer.shadowOffset = CGSizeMake(0, 8);
-    _glass = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterialDark]];
-    _glass.layer.cornerRadius = 22;
+    // Liquid glass, so the background shows through: no shadow (a layer shadow is drawn under the whole card and
+    // darkens what the glass shows) and no fill, only the faintest accent wash.
+    self.backgroundColor = UIColor.clearColor;
+    _liquid = NO;
+    _glass = [[UIVisualEffectView alloc] initWithEffect:glassEffect(&_liquid)];
     _glass.layer.cornerCurve = kCACornerCurveContinuous;
-    _glass.clipsToBounds = YES;
-    _glass.layer.borderWidth = 0.5;
-    _glass.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.14].CGColor;
+    shapeGlass(_glass, 22);
+    if (!_liquid) {
+        _glass.clipsToBounds = YES;
+        _glass.layer.borderWidth = 0.5;
+        _glass.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.18].CGColor;
+    }
     [self addSubview:_glass];
     _tint = [CAGradientLayer layer];
     _tint.startPoint = CGPointMake(0, 0);
     _tint.endPoint = CGPointMake(1, 1);
+    _tint.cornerRadius = 22;
+    _tint.cornerCurve = kCACornerCurveContinuous;
+    _tint.masksToBounds = YES;
     [_glass.contentView.layer addSublayer:_tint];
     _icon = [UIImageView new];
     _icon.contentMode = UIViewContentModeScaleAspectFit;
@@ -204,12 +244,13 @@ static BOOL openPlayer(UIView *from) {
     [super layoutSubviews];
     CGRect b = self.bounds;
     _glass.frame = b;
-    self.layer.shadowPath = [UIBezierPath bezierPathWithRoundedRect:b cornerRadius:22].CGPath;
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
     UIColor *accent = MRGAccent();
     _tint.frame = b;
-    _tint.colors = @[(id)[accent colorWithAlphaComponent:0.42].CGColor, (id)[accent colorWithAlphaComponent:0.10].CGColor, (id)[UIColor colorWithWhite:0 alpha:0.25].CGColor];
+    // A wash, not a fill: the glass itself carries the material.
+    CGFloat top = _liquid ? 0.14 : 0.18;
+    _tint.colors = @[(id)[accent colorWithAlphaComponent:top].CGColor, (id)[accent colorWithAlphaComponent:0.03].CGColor, (id)UIColor.clearColor.CGColor];
     [CATransaction commit];
     CGFloat pad = 16;
     _icon.frame = CGRectMake(pad, 14, 22, 22);
