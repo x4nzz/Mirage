@@ -211,6 +211,7 @@ static UIImage *placeholderArt(CGSize size) {
     NSString *title = !builtIn ? @"Update Mirage" : on ? @"Remove" : @"Get";
     [_button setTitle:title forState:UIControlStateNormal];
     _button.enabled = builtIn;
+    _button.hidden = NO;
     _button.backgroundColor = on ? [UIColor colorWithWhite:1 alpha:0.12] : builtIn ? MRGAccent() : [UIColor colorWithWhite:1 alpha:0.06];
     [_button setTitleColor:on ? UIColor.whiteColor : builtIn ? MRGOnAccent() : UIColor.grayColor forState:UIControlStateNormal];
     _art.image = placeholderArt(CGSizeMake(320, 180));
@@ -309,26 +310,59 @@ static BOOL addonHasSettings(NSDictionary *a) {
     });
 }
 
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)t { return MAX((NSInteger)_addons.count, 1); }
+- (NSInteger)leadingSections { return MRGShopHeaderRows() > 0 ? 1 : 0; }
+- (NSDictionary *)addonInSection:(NSInteger)s {
+    NSInteger i = s - [self leadingSections];
+    return (i >= 0 && i < (NSInteger)self->_addons.count) ? self->_addons[i] : nil;
+}
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)t {
+    return [self leadingSections] + MAX((NSInteger)_addons.count, 1);
+}
 - (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)s {
     return MRGSafeCount(^NSInteger {
-        if (!self->_addons.count) return 0;
-        NSDictionary *a = self->_addons[s];
-        return 1 + (addonHasSettings(a) ? 1 : 0);
+        if (s < [self leadingSections]) return MRGShopHeaderRows();
+        NSDictionary *a = [self addonInSection:s];
+        if (!a) return 0;
+        // The card, an on/off row, and a Settings row while it's on and has a schema.
+        return 2 + (addonHasSettings(a) ? 1 : 0);
     });
 }
+- (NSString *)tableView:(UITableView *)t titleForHeaderInSection:(NSInteger)s {
+    if (s < [self leadingSections]) return MRGShopHeaderTitle();
+    return nil;
+}
 - (NSString *)tableView:(UITableView *)t titleForFooterInSection:(NSInteger)s {
-    if (s < (NSInteger)self->_addons.count) {
-        NSString *notice = MRGAddonCrashNotice(self->_addons[s][@"id"]);
+    if (s < [self leadingSections]) return MRGShopHeaderFooter();
+    NSDictionary *a = [self addonInSection:s];
+    if (a) {
+        NSString *notice = MRGAddonCrashNotice(a[@"id"]);
         if (notice.length) return notice;
     }
-    return s == (NSInteger)_addons.count - 1 || !_addons.count ? (_note ?: @"Pull down to check for new add-ons.") : nil;
+    NSInteger last = [self leadingSections] + (NSInteger)self->_addons.count - 1;
+    return s == last || !self->_addons.count ? (self->_note ?: @"Pull down to check for new add-ons.") : nil;
 }
 
 - (UITableViewCell *)tableView:(UITableView *)t cellForRowAtIndexPath:(NSIndexPath *)ip {
     return MRGSafeCell(ip, ^UITableViewCell *{
-        NSDictionary *a = self->_addons[ip.section];
+        if (ip.section < [self leadingSections]) return MRGShopHeaderCell(t, ip.row);
+        NSDictionary *a = [self addonInSection:ip.section];
         if (ip.row == 1) {
+            UITableViewCell *c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
+            c.backgroundColor = [UIColor colorWithWhite:0.11 alpha:0.92];
+            c.textLabel.text = @"On";
+            c.textLabel.textColor = UIColor.whiteColor;
+            c.selectionStyle = UITableViewCellSelectionStyleNone;
+            BOOL builtIn = MRGAddonBuiltIn(a[@"id"]) && versionAtLeast(@MRG_VERSION, a[@"min_mirage"]);
+            UISwitch *sw = [UISwitch new];
+            sw.on = MRGAddonInstalled(a[@"id"]);
+            sw.enabled = builtIn;
+            sw.onTintColor = MRGAccent();
+            [sw addTarget:self action:@selector(switched:) forControlEvents:UIControlEventValueChanged];
+            sw.tag = ip.section;
+            c.accessoryView = sw;
+            return c;
+        }
+        if (ip.row == 2) {
             UITableViewCell *c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:nil];
             c.backgroundColor = [UIColor colorWithWhite:0.11 alpha:0.92];
             c.textLabel.text = @"Settings";
@@ -351,9 +385,17 @@ static BOOL addonHasSettings(NSDictionary *a) {
     });
 }
 
+- (void)switched:(UISwitch *)sw {
+    NSDictionary *a = [self addonInSection:sw.tag];
+    if (!a) return;
+    MRGAddonSetInstalled(a[@"id"], sw.on);
+    [self.tableView reloadSections:[NSIndexSet indexSetWithIndex:sw.tag] withRowAnimation:UITableViewRowAnimationNone];
+}
+
 - (void)tableView:(UITableView *)t didSelectRowAtIndexPath:(NSIndexPath *)ip {
     [t deselectRowAtIndexPath:ip animated:YES];
-    if (ip.row == 1) MRGPushPage(self, MRGAddonSettingsPage(self->_addons[ip.section][@"id"]));
+    if (ip.section < [self leadingSections]) { MRGShopHeaderSelect(self, ip.row); return; }
+    if (ip.row == 2) MRGPushPage(self, MRGAddonSettingsPage([self addonInSection:ip.section][@"id"]));
 }
 
 - (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; [self.tableView reloadData]; }
