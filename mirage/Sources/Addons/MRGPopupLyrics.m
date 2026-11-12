@@ -52,6 +52,8 @@ static CGFloat fontSize(void) { return MIN(30, MAX(18, MRGAddonNumber(kAddon, @"
 static CGFloat frost(void) { return MIN(1, MAX(0, MRGAddonNumber(kAddon, @"frost", 0.3))); }
 static CGFloat tintAmount(void) { return MIN(0.5, MAX(0, MRGAddonNumber(kAddon, @"tint", 0.10))); }
 
+// 0.6.7: how the lines light up. 0 line by line (Spotify), 1 word by word (Apple Music).
+static BOOL wordSync(void) { return MRGAddonInteger(kAddon, @"style", 0) == 1; }
 static NSInteger linesShown(void) { return MIN(5, MAX(3, MRGAddonInteger(kAddon, @"lines", 4))); }
 static BOOL lowPower(void) { return NSProcessInfo.processInfo.isLowPowerModeEnabled; }
 
@@ -228,11 +230,15 @@ static void shadowText(UILabel *l) {
     CGFloat _builtWidth, _builtFont;
     NSTimer *_timer;
     BOOL _wants;
+    NSString *_swept;       // the last sweep drawn on the active line (a signature), so an unchanged one isn't redrawn
+    NSInteger _sweptLine;
+    BOOL _estimated;        // the active line's words are spread across it, not timed by the source
 }
 
 - (instancetype)initWithFrame:(CGRect)frame {
     if (!(self = [super initWithFrame:frame])) return nil;
     _active = NSIntegerMin;
+    _sweptLine = -1;
     _labels = [NSMutableArray array];
     self.layer.cornerRadius = 22;
     self.layer.cornerCurve = kCACornerCurveContinuous;
@@ -427,7 +433,7 @@ static void shadowText(UILabel *l) {
 
 - (void)updateTimer {
     BOOL run = _wants && self.window && UIApplication.sharedApplication.applicationState != UIApplicationStateBackground;
-    NSTimeInterval every = lowPower() ? 0.5 : 0.1;
+    NSTimeInterval every = lowPower() ? 0.5 : wordSync() ? 0.066 : 0.1;
     if (run && _timer && fabs(_timer.timeInterval - every) < 0.01) return;
     [_timer invalidate];
     _timer = nil;
@@ -444,6 +450,8 @@ static void shadowText(UILabel *l) {
 - (UIFont *)lineFont { return [UIFont systemFontOfSize:fontSize() weight:UIFontWeightHeavy]; }
 
 - (void)rebuild {
+    _sweptLine = -1;
+    _swept = nil;
     for (UILabel *l in _labels) [l removeFromSuperview];
     [_labels removeAllObjects];
     CGFloat w = _clip.bounds.size.width;
@@ -482,10 +490,105 @@ static void shadowText(UILabel *l) {
     NSInteger ms = sgPos ? sgPos() : 0;
     NSInteger index = ms >= 0 ? sgLead(_lines, ms) : -1;
     if (index >= (NSInteger)_labels.count) index = (NSInteger)_labels.count - 1;
-    if (index == _active) return;
-    BOOL first = _active == NSIntegerMin;
-    _active = index;
-    [self showActive:!first && self.window != nil];
+    if (index != _active) {
+        BOOL first = _active == NSIntegerMin;
+        _active = index;
+        [self showActive:!first && self.window != nil];
+    }
+    [self sweep:ms];
+}
+
+#pragma mark - word by word
+
+// The words of a line, each {text, start, end, joined}, from Vitrine's line (SGKaraokeLine: words, start, end, timing).
+// `timed` is YES only when the source timed every word (SGKaraokeTimingWords); otherwise the times are spread across
+// the line here by each word's length, which is an estimate, and the header says so.
+static NSArray<NSDictionary *> *wordsOf(id line, NSInteger lineEnd, BOOL *timed) {
+    *timed = NO;
+    NSMutableArray *out = [NSMutableArray array];
+    @try {
+        NSArray *words = [line valueForKey:@"words"];
+        NSInteger start = [[line valueForKey:@"start"] integerValue], end = [[line valueForKey:@"end"] integerValue];
+        NSUInteger timing = [[line valueForKey:@"timing"] unsignedIntegerValue];
+        if (![words isKindOfClass:NSArray.class] || !words.count) return nil;
+        BOOL ok = timing == 0;
+        NSInteger last = -1;
+        for (id w in words) {
+            NSString *text = [w valueForKey:@"text"];
+            if (![text isKindOfClass:NSString.class]) return nil;
+            NSInteger ws = [[w valueForKey:@"start"] integerValue], we = [[w valueForKey:@"end"] integerValue];
+            if (ws <= 0 || we < ws || ws < last) ok = NO;
+            last = ws;
+            [out addObject:@{@"text": text, @"start": @(ws), @"end": @(we), @"joined": @([[w valueForKey:@"joined"] boolValue])}];
+        }
+        if (ok) { *timed = YES; return out; }
+        // Estimated: from the line's start to its end (or the next line's start), shared out by length.
+        if (end <= start) end = lineEnd > start ? lineEnd : start + 3500;
+        end = MIN(end, start + 12000);
+        NSInteger total = 0;
+        for (NSDictionary *w in out) total += [w[@"text"] length] + 1;
+        if (total <= 0 || end <= start) return nil;
+        double t = start;
+        for (NSUInteger i = 0; i < out.count; i++) {
+            double span = (end - start) * (double)([out[i][@"text"] length] + 1) / total;
+            NSMutableDictionary *w = [out[i] mutableCopy];
+            w[@"start"] = @((NSInteger)t);
+            w[@"end"] = @((NSInteger)(t + span));
+            out[i] = w;
+            t += span;
+        }
+        return out;
+    } @catch (NSException *e) { return nil; }
+}
+
+// Apple Music style: the active line's sung words are lit, the word being sung fills in, the rest wait dimmed.
+- (void)sweep:(NSInteger)ms {
+    BOOL want = wordSync() && _active >= 0 && _active < (NSInteger)_labels.count && _active < (NSInteger)_lines.count;
+    // The line that was swept before goes back to plain text.
+    if (_sweptLine >= 0 && _sweptLine < (NSInteger)_labels.count && (!want || _sweptLine != _active)) {
+        UILabel *old = _labels[_sweptLine];
+        if (old.attributedText.length) { NSString *plain = old.attributedText.string; old.attributedText = nil; old.text = plain; old.textColor = UIColor.whiteColor; }
+        _sweptLine = -1;
+        _swept = nil;
+    }
+    BOOL estimated = NO;
+    if (want) {
+        NSInteger next = _active + 1 < (NSInteger)_lines.count ? [[_lines[_active + 1] valueForKey:@"start"] integerValue] : 0;
+        BOOL timed = NO;
+        NSArray *words = wordsOf(_lines[_active], next, &timed);
+        estimated = words.count && !timed;
+        if (words.count) {
+            UILabel *l = _labels[_active];
+            NSMutableString *sig = [NSMutableString string];
+            NSMutableArray *levels = [NSMutableArray array];
+            for (NSDictionary *w in words) {
+                NSInteger ws = [w[@"start"] integerValue], we = MAX(ws + 1, [w[@"end"] integerValue]);
+                double p = ms <= ws ? 0 : ms >= we ? 1 : (double)(ms - ws) / (we - ws);
+                NSInteger q = lround(p * 8);
+                [levels addObject:@(q)];
+                [sig appendFormat:@"%ld,", (long)q];
+            }
+            if (![sig isEqualToString:_swept ?: @""] || _sweptLine != _active) {
+                NSMutableAttributedString *text = [NSMutableAttributedString new];
+                UIFont *font = [self lineFont];
+                for (NSUInteger i = 0; i < words.count; i++) {
+                    NSString *piece = words[i][@"text"];
+                    if (i > 0 && ![words[i][@"joined"] boolValue]) [text appendAttributedString:[[NSAttributedString alloc] initWithString:@" " attributes:@{NSFontAttributeName: font}]];
+                    CGFloat lit = 0.38 + 0.62 * [levels[i] integerValue] / 8.0;
+                    [text appendAttributedString:[[NSAttributedString alloc] initWithString:piece attributes:@{NSFontAttributeName: font, NSForegroundColorAttributeName: [UIColor colorWithWhite:1 alpha:lit]}]];
+                }
+                l.attributedText = text;
+                _swept = [sig copy];
+                _sweptLine = _active;
+            }
+        }
+    }
+    if (estimated != _estimated) {
+        _estimated = estimated;
+        _kicker.text = estimated ? @"LYRICS ≈" : @"LYRICS";
+        _kicker.accessibilityLabel = estimated ? @"Lyrics, words estimated" : @"Lyrics";
+        [self setNeedsLayout];
+    }
 }
 
 // The column moves so the active line sits a little above the middle; every line's size, brightness and blur
@@ -666,7 +769,9 @@ void MRGPopupPlace(UIView *page) {
     clarity.live = YES;
     MRGAddonSetting *tint = [MRGAddonSetting slider:@"tint" title:@"Tint" min:0 max:0.5 fallback:0.10];
     tint.live = YES;
-    return @[size, lines, clarity, tint];
+    MRGAddonSetting *style = [MRGAddonSetting picker:@"style" title:@"Sync" options:@[@"Line by line", @"Word by word"] values:@[@0, @1] fallback:@0];
+    style.footer = @"Word by word uses the source's word timings. When it only times lines, the words are spread across the line as an estimate, and the header shows LYRICS ≈.";
+    return @[size, lines, style, clarity, tint];
 }
 // On or off takes effect on Home right away: every Home page seen gets its shelf (or loses its room).
 static void relayoutHome(void) {
@@ -693,7 +798,7 @@ static void relayoutHome(void) {
 }
 - (void)addonDidEnable { dispatch_async(dispatch_get_main_queue(), ^{ @try { relayoutHome(); } @catch (NSException *e) {} }); }
 - (void)addonDidDisable { dispatch_async(dispatch_get_main_queue(), ^{ @try { relayoutHome(); } @catch (NSException *e) {} }); }
-- (NSString *)addonSummary { return [NSString stringWithFormat:@"%ld lines", (long)linesShown()]; }
+- (NSString *)addonSummary { return [NSString stringWithFormat:@"%ld lines, %@", (long)linesShown(), wordSync() ? @"word by word" : @"line by line"]; }
 @end
 
 __attribute__((constructor)) static void mrgPopupConstructor(void) { MRGAddonRegister([MRGPopupAddon new]); }
