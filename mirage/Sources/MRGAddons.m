@@ -7,7 +7,7 @@ static NSUserDefaults *D(void) { return NSUserDefaults.standardUserDefaults; }
 static NSString *const kIndexURL = @"https://raw.githubusercontent.com/x4nzz/Mirage/main/addons/index.json";
 
 // The same as addons/index.json in the repo, for a first launch offline or a GitHub that doesn't answer.
-static NSString *const kBundledIndex = @"{\"format\":1,\"addons\":[{\"id\":\"vinyl\",\"name\":\"Vinyl\",\"description\":\"Turns the Now Playing cover into a record sleeve. The cover slides to one side and a vinyl record peeks out from behind it. The record spins while music plays, stops when you pause, and its label shows the album art. You can pick the spin speed and the side the record sits on.\",\"preview\":\"https://raw.githubusercontent.com/x4nzz/Mirage/main/addons/previews/vinyl.png\",\"version\":\"1.1\",\"type\":\"Now Playing\",\"author\":\"Mirage\",\"min_mirage\":\"0.5.0\"},{\"id\":\"dynamic-colors\",\"name\":\"Dynamic colors\",\"description\":\"Takes a color from the album cover and tints Mirage's accent, toggles and Vitrine's glass. Cached per song, so a track change doesn't flash or stutter. A theme can keep its own accent.\",\"version\":\"1.0\",\"type\":\"Look\",\"author\":\"Mirage\",\"min_mirage\":\"0.6.0\"},{\"id\":\"shuffle-plus\",\"name\":\"Shuffle+\",\"description\":\"Shuffle a playlist or album without playing the same artist twice in a row, and without starting on songs you just heard. Uses Spotify's own queue.\",\"version\":\"1.0\",\"type\":\"Playback\",\"author\":\"Mirage\",\"min_mirage\":\"0.6.0\"}]}";
+static NSString *const kBundledIndex = @"{\"format\":1,\"addons\":[{\"id\":\"vinyl\",\"name\":\"Vinyl\",\"description\":\"Turns the Now Playing cover into a record sleeve. The cover slides to one side and a vinyl record peeks out from behind it. The record spins while music plays, stops when you pause, and its label shows the album art. You can pick the spin speed and the side the record sits on.\",\"preview\":\"https://raw.githubusercontent.com/x4nzz/Mirage/main/addons/previews/vinyl.png\",\"version\":\"1.1\",\"type\":\"Now Playing\",\"author\":\"Mirage\",\"min_mirage\":\"0.5.0\"},{\"id\":\"dynamic-colors\",\"name\":\"Dynamic colors\",\"description\":\"Takes a color from the album cover and tints Mirage's accent, toggles and Vitrine's glass. Cached per song, so a track change doesn't flash or stutter. A theme can keep its own accent.\",\"version\":\"1.0\",\"type\":\"Look\",\"author\":\"Mirage\",\"min_mirage\":\"0.6.0\"},{\"id\":\"trash\",\"name\":\"Trash\",\"description\":\"Move a song to the trash from Now Playing or its menu. Trashed songs are skipped in queues, playlists and the AI DJ. Restore them from the list.\",\"version\":\"1.0\",\"type\":\"Playback\",\"author\":\"Mirage\",\"min_mirage\":\"0.6.0\"},{\"id\":\"shuffle-plus\",\"name\":\"Shuffle+\",\"description\":\"Shuffle a playlist or album without playing the same artist twice in a row, and without starting on songs you just heard. Uses Spotify's own queue.\",\"version\":\"1.0\",\"type\":\"Playback\",\"author\":\"Mirage\",\"min_mirage\":\"0.6.0\"}]}";
 
 BOOL MRGAddonBuiltIn(NSString *addonID) {
     return MRGAddonObject(addonID) != nil || [@[@"vinyl"] containsObject:addonID ?: @""];
@@ -237,7 +237,8 @@ static NSString *addonSummary(NSDictionary *a) {
 
 static BOOL addonHasSettings(NSDictionary *a) {
     id<MRGAddon> addon = MRGAddonObject(a[@"id"]);
-    return MRGAddonInstalled(a[@"id"]) && [addon addonSettings].count > 0;
+    BOOL page = [addon respondsToSelector:@selector(addonSettingsController)];
+    return MRGAddonInstalled(a[@"id"]) && ([addon addonSettings].count > 0 || page);
 }
 
 @interface MRGAddonShop : UITableViewController
@@ -401,7 +402,11 @@ static BOOL addonHasSettings(NSDictionary *a) {
 - (void)tableView:(UITableView *)t didSelectRowAtIndexPath:(NSIndexPath *)ip {
     [t deselectRowAtIndexPath:ip animated:YES];
     if (ip.section < [self leadingSections]) { MRGShopHeaderSelect(self, ip.row); return; }
-    if (ip.row == 2) MRGPushPage(self, MRGAddonSettingsPage([self addonInSection:ip.section][@"id"]));
+    if (ip.row == 2) {
+        id<MRGAddon> addon = MRGAddonObject([self addonInSection:ip.section][@"id"]);
+        UIViewController *page = [addon respondsToSelector:@selector(addonSettingsController)] ? [addon addonSettingsController] : nil;
+        MRGPushPage(self, page ?: MRGAddonSettingsPage(addon.addonID));
+    }
 }
 
 - (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; [self.tableView reloadData]; }

@@ -21,6 +21,15 @@
       "min_mirage": "0.6.0"
     },
     {
+      "id": "trash",
+      "name": "Trash",
+      "description": "Move a song to the trash from Now Playing or its menu. Trashed songs are skipped in queues, playlists and the AI DJ. Restore them from the list.",
+      "version": "1.0",
+      "type": "Playback",
+      "author": "Mirage",
+      "min_mirage": "0.6.0"
+    },
+    {
       "id": "shuffle-plus",
       "name": "Shuffle+",
       "description": "Shuffle a playlist or album without playing the same artist twice in a row, and without starting on songs you just heard. Uses Spotify's own queue.",

@@ -41,6 +41,8 @@ typedef NS_ENUM(NSInteger, MRGAddonControl) {
 - (void)addonDidDisable;
 @optional
 - (NSString *)addonSummary;                      // the settings row's detail, nil to leave it blank
+// A page of its own in place of the generated schema (the trash list, playlist tools, save and load).
+- (UIViewController *)addonSettingsController;
 @end
 
 void MRGAddonRegister(id<MRGAddon> addon);

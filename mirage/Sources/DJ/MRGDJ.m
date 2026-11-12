@@ -8,6 +8,7 @@
 #import "MRGHistory.h"
 #import "MRGInfo.h"
 #import "MRGChat.h"
+#import "Addons/MRGTrash.h"
 #import <AVFoundation/AVFoundation.h>
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
@@ -609,6 +610,7 @@ static NSString *firstArtist(NSString *a) {
         NSUInteger tooPopular = 0, unrated = 0, offPool = 0, offDropped = 0;
         for (MRGDJTrack *t in slots) {
             if (!t.uri) { [dropped addObject:t]; continue; }
+            if (MRGTrashContains(t.uri)) { [dropped addObject:t]; continue; }
             if ([seen containsObject:t.uri]) continue;
             NSString *ak = t.artist.lowercaseString ?: @"";
             BOOL focusArtist = self->_focusMode != 4 && [self isFocusArtist:t.artist];
