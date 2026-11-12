@@ -257,6 +257,8 @@ static NSComparisonResult cmpAdded(NSDictionary *a, NSDictionary *b) {
 - (NSString *)addonCategory { return @"Library"; }
 - (NSString *)addonVersion { return @"1.0"; }
 - (NSString *)addonDescription { return @"Sort a playlist, remove duplicates, or save a shuffled copy, with undo."; }
+- (NSInteger)addonBatteryImpact { return 0; }
+- (NSString *)addonBatteryNote { return @"Low: works only when you use it."; }
 - (NSArray<MRGAddonSetting *> *)addonSettings { return @[]; }
 - (UIViewController *)addonSettingsController { return [MRGPlaylistToolsPage new]; }
 - (void)addonDidEnable {}

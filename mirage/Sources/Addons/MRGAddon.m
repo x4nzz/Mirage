@@ -229,6 +229,7 @@ static NSInteger pickerIndex(MRGAddonSetting *setting, id value) {
     self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
     self.tableView.backgroundColor = UIColor.blackColor;
     UIEdgeInsets inset = self.tableView.contentInset; inset.bottom = 150; self.tableView.contentInset = inset;
+    self.tableView.tableHeaderView = MRGAddonBatteryHeader(self.addonID, self.view.bounds.size.width);
 }
 - (NSArray<MRGAddonSetting *> *)settings { return [MRGAddonObject(self.addonID) addonSettings] ?: @[]; }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)t { return MAX((NSInteger)self.settings.count, 1); }
@@ -351,6 +352,45 @@ static NSInteger pickerIndex(MRGAddonSetting *setting, id value) {
     [self presentViewController:a animated:YES completion:nil];
 }
 @end
+
+NSAttributedString *MRGAddonBatteryLine(NSString *addonID, UIFont *font) {
+    id<MRGAddon> addon = MRGAddonObject(addonID);
+    if (![addon respondsToSelector:@selector(addonBatteryNote)]) return nil;
+    NSString *note = nil;
+    NSInteger level = 0;
+    @try {
+        note = [addon addonBatteryNote];
+        if ([addon respondsToSelector:@selector(addonBatteryImpact)]) level = [addon addonBatteryImpact];
+    } @catch (NSException *e) { return nil; }
+    if (!note.length) return nil;
+    UIColor *color = level >= 2 ? UIColor.systemOrangeColor : level == 1 ? UIColor.systemYellowColor : [UIColor colorWithWhite:0.6 alpha:1];
+    NSString *symbol = level >= 2 ? @"battery.25percent" : level == 1 ? @"battery.50percent" : @"battery.100percent";
+    UIImage *icon = [[UIImage systemImageNamed:symbol withConfiguration:[UIImageSymbolConfiguration configurationWithFont:font]] imageWithTintColor:color renderingMode:UIImageRenderingModeAlwaysOriginal];
+    NSMutableAttributedString *out = [NSMutableAttributedString new];
+    if (icon) {
+        NSTextAttachment *att = [NSTextAttachment new];
+        att.image = icon;
+        [out appendAttributedString:[NSAttributedString attributedStringWithAttachment:att]];
+        [out appendAttributedString:[[NSAttributedString alloc] initWithString:@"  " attributes:@{NSFontAttributeName: font}]];
+    }
+    [out appendAttributedString:[[NSAttributedString alloc] initWithString:[@"Battery · " stringByAppendingString:note]
+                                                                attributes:@{NSFontAttributeName: font, NSForegroundColorAttributeName: color}]];
+    return out;
+}
+
+UIView *MRGAddonBatteryHeader(NSString *addonID, CGFloat width) {
+    NSAttributedString *line = MRGAddonBatteryLine(addonID, [UIFont systemFontOfSize:13 weight:UIFontWeightMedium]);
+    if (!line) return nil;
+    UIView *box = [[UIView alloc] initWithFrame:CGRectMake(0, 0, MAX(200, width), 44)];
+    UILabel *l = [[UILabel alloc] initWithFrame:CGRectInset(box.bounds, 20, 8)];
+    l.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    l.attributedText = line;
+    l.numberOfLines = 2;
+    l.adjustsFontSizeToFitWidth = YES;
+    l.minimumScaleFactor = 0.85;
+    [box addSubview:l];
+    return box;
+}
 
 UIViewController *MRGAddonSettingsPage(NSString *addonID) {
     MRGAddonSettingsController *page = [MRGAddonSettingsController new];

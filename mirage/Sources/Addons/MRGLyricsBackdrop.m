@@ -251,6 +251,8 @@ static void applyCover(UIView *tilt) {
 - (NSString *)addonCategory { return @"Now Playing"; }
 - (NSString *)addonVersion { return @"1.0"; }
 - (NSString *)addonDescription { return @"Dims the Now Playing cover and scrolls the synced lyrics over it, big."; }
+- (NSInteger)addonBatteryImpact { return 2; }
+- (NSString *)addonBatteryNote { return @"Higher: redraws the lyrics 10 times a second while Now Playing is open."; }
 - (NSArray<MRGAddonSetting *> *)addonSettings {
     MRGAddonSetting *dim = [MRGAddonSetting slider:@"dim" title:@"Cover dimming" min:0.3 max:0.85 fallback:0.6];
     dim.live = YES;

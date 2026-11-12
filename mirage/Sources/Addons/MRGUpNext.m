@@ -313,6 +313,8 @@ static void applyCover(UIView *tilt) {
 - (NSString *)addonCategory { return @"Now Playing"; }
 - (NSString *)addonVersion { return @"1.0"; }
 - (NSString *)addonDescription { return @"The next songs on the Now Playing cover; hold its middle for a card."; }
+- (NSInteger)addonBatteryImpact { return 0; }
+- (NSString *)addonBatteryNote { return @"Low: one queue read per song, no animation."; }
 - (NSArray<MRGAddonSetting *> *)addonSettings {
     MRGAddonSetting *row = [MRGAddonSetting toggle:@"row" title:@"Row on the cover" fallback:YES];
     MRGAddonSetting *card = [MRGAddonSetting toggle:@"card" title:@"Card on hold" fallback:YES];

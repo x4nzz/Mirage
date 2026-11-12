@@ -183,6 +183,8 @@ static void applyCover(UIView *tilt) {
 - (NSString *)addonCategory { return @"Now Playing"; }
 - (NSString *)addonVersion { return @"1.0"; }
 - (NSString *)addonDescription { return @"A thin progress ring around the Now Playing cover."; }
+- (NSInteger)addonBatteryImpact { return 0; }
+- (NSString *)addonBatteryNote { return @"Low: updates once a second, only while Now Playing is open."; }
 - (NSArray<MRGAddonSetting *> *)addonSettings {
     MRGAddonSetting *color = [MRGAddonSetting picker:@"color" title:@"Color" options:@[@"Accent", @"From the cover", @"White"] values:@[@0, @1, @2] fallback:@0];
     MRGAddonSetting *width = [MRGAddonSetting picker:@"width" title:@"Thickness" options:@[@"Hairline", @"Thin", @"Bold"] values:@[@1.5, @3, @5] fallback:@3];

@@ -147,6 +147,8 @@ static void applyPart(MRGNowPart part, id owner) {
 - (NSString *)addonCategory { return @"Now Playing"; }
 - (NSString *)addonVersion { return @"1.0"; }
 - (NSString *)addonDescription { return @"A player button that leaves just the cover, the controls, queue and devices on black."; }
+- (NSInteger)addonBatteryImpact { return 0; }
+- (NSString *)addonBatteryNote { return @"Low: nothing runs until you press it."; }
 - (NSArray<MRGAddonSetting *> *)addonSettings {
     MRGAddonSetting *on = [MRGAddonSetting toggle:@"on" title:@"Focus mode on" fallback:NO];
     MRGAddonSetting *black = [MRGAddonSetting toggle:@"oled" title:@"True black background" fallback:YES];

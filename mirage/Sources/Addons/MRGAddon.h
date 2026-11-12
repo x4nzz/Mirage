@@ -44,6 +44,10 @@ typedef NS_ENUM(NSInteger, MRGAddonControl) {
 - (NSString *)addonSummary;                      // the settings row's detail, nil to leave it blank
 // A page of its own in place of the generated schema (the trash list, playlist tools, save and load).
 - (UIViewController *)addonSettingsController;
+// 0.6.7: how much battery it costs, judged by what it runs (animation, timers, network, audio): 0 low, 1 some,
+// 2 higher, and one short line saying why. Shown on the shop card and the add-on's page.
+- (NSInteger)addonBatteryImpact;
+- (NSString *)addonBatteryNote;
 @end
 
 void MRGAddonRegister(id<MRGAddon> addon);
@@ -65,6 +69,10 @@ NSInteger MRGAddonInteger(NSString *addonID, NSString *key, NSInteger fallback);
 void MRGAddonSetInteger(NSString *addonID, NSString *key, NSInteger value);
 
 UIViewController *MRGAddonSettingsPage(NSString *addonID);
+// The battery line for an add-on (a battery symbol and its note, colored by impact), nil when it has none.
+NSAttributedString *MRGAddonBatteryLine(NSString *addonID, UIFont *font);
+// A table header with that line, for an add-on's page.
+UIView *MRGAddonBatteryHeader(NSString *addonID, CGFloat width);
 
 // Set when an add-on was turned off because it crashed or threw. Nil otherwise.
 NSString *MRGAddonCrashNotice(NSString *addonID);

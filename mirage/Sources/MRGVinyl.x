@@ -816,6 +816,8 @@ static void relayAll(void) {
 - (NSString *)addonCategory { return @"Now Playing"; }
 - (NSString *)addonVersion { return @"1.2"; }
 - (NSString *)addonDescription { return @"The Now Playing cover becomes a sleeve with a spinning record peeking out."; }
+- (NSInteger)addonBatteryImpact { return 2; }
+- (NSString *)addonBatteryNote { return @"Higher: the record spins while a song plays; it stops in Low Power Mode."; }
 - (NSArray<MRGAddonSetting *> *)addonSettings {
     MRGAddonSetting *speed = [MRGAddonSetting picker:@"mirage.addon.vinyl.turn" title:@"Spin speed" options:@[@"Slow", @"33⅓ RPM", @"45 RPM"] values:@[@4.0, @1.8, @1.33] fallback:@1.8];
     MRGAddonSetting *side = [MRGAddonSetting picker:@"mirage.addon.vinyl.left" title:@"Record side" options:@[@"Left", @"Right"] values:@[@YES, @NO] fallback:@NO];

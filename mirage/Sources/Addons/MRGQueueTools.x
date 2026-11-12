@@ -204,6 +204,8 @@ static void addMenuRows(UIViewController *menu) {
 - (NSString *)addonCategory { return @"Playback"; }
 - (NSString *)addonVersion { return @"1.0"; }
 - (NSString *)addonDescription { return @"Reorder the real queue, Play next, or queue after this album."; }
+- (NSInteger)addonBatteryImpact { return 0; }
+- (NSString *)addonBatteryNote { return @"Low: works only when you use it."; }
 - (NSArray<MRGAddonSetting *> *)addonSettings { return @[]; }
 - (UIViewController *)addonSettingsController { return [MRGQueuePage new]; }
 - (void)addonDidEnable {}

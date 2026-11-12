@@ -171,6 +171,8 @@ UIViewController *MRGTrashPage(void) { return [MRGTrashList new]; }
 - (NSString *)addonCategory { return @"Playback"; }
 - (NSString *)addonVersion { return @"1.0"; }
 - (NSString *)addonDescription { return @"Trash songs from Now Playing or their menu; they're skipped everywhere."; }
+- (NSInteger)addonBatteryImpact { return 0; }
+- (NSString *)addonBatteryNote { return @"Low: a check when a song starts."; }
 - (NSArray<MRGAddonSetting *> *)addonSettings { return @[]; }
 - (UIViewController *)addonSettingsController { return MRGTrashPage(); }
 - (void)addonDidEnable {}

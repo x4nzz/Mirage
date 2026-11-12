@@ -414,6 +414,8 @@ static void watchLikes(MRGNowPart part, id owner) {
 - (NSString *)addonCategory { return @"Library"; }
 - (NSString *)addonVersion { return @"1.0"; }
 - (NSString *)addonDescription { return @"An endless station that keeps the queue full and learns from your skips and likes."; }
+- (NSInteger)addonBatteryImpact { return 1; }
+- (NSString *)addonBatteryNote { return @"Some: checks the queue every 20 seconds and looks up songs online."; }
 - (NSArray<MRGAddonSetting *> *)addonSettings { return @[]; }
 - (UIViewController *)addonSettingsController { return [MRGRadioPage new]; }
 - (void)addonDidEnable {}

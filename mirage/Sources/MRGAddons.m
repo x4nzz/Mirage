@@ -137,7 +137,7 @@ static void loadPreview(NSDictionary *a, void (^done)(UIImage *)) {
 
 @implementation MRGAddonCard {
     UIImageView *_art, *_icon;
-    UILabel *_name, *_meta, *_desc, *_state, *_badge, *_chip;
+    UILabel *_name, *_meta, *_desc, *_state, *_badge, *_chip, *_battery;
     UIView *_rule, *_dot;
     UISwitch *_switch;
 }
@@ -185,6 +185,8 @@ static UILabel *pill(UIFont *font) {
     _desc.font = [UIFont systemFontOfSize:15];
     _desc.textColor = [UIColor colorWithWhite:0.78 alpha:1];
     _desc.numberOfLines = 0;
+    _battery = [UILabel new];
+    _battery.numberOfLines = 0;
     _rule = [UIView new];
     _rule.backgroundColor = [UIColor colorWithWhite:1 alpha:0.08];
     _dot = [UIView new];
@@ -193,7 +195,7 @@ static UILabel *pill(UIFont *font) {
     _state.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
     _switch = [UISwitch new];
     [_switch addTarget:self action:@selector(flipped) forControlEvents:UIControlEventValueChanged];
-    for (UIView *v in @[_art, _chip, _badge, _icon, _name, _meta, _desc, _rule, _dot, _state, _switch]) { v.translatesAutoresizingMaskIntoConstraints = NO; [self.contentView addSubview:v]; }
+    for (UIView *v in @[_art, _chip, _badge, _icon, _name, _meta, _desc, _battery, _rule, _dot, _state, _switch]) { v.translatesAutoresizingMaskIntoConstraints = NO; [self.contentView addSubview:v]; }
     UILayoutGuide *g = self.contentView.layoutMarginsGuide;
     NSLayoutConstraint *bottom = [_switch.bottomAnchor constraintEqualToAnchor:self.contentView.bottomAnchor constant:-14];
     bottom.priority = UILayoutPriorityRequired - 1;
@@ -221,7 +223,10 @@ static UILabel *pill(UIFont *font) {
         [_desc.topAnchor constraintEqualToAnchor:_icon.bottomAnchor constant:12],
         [_desc.leadingAnchor constraintEqualToAnchor:g.leadingAnchor],
         [_desc.trailingAnchor constraintEqualToAnchor:g.trailingAnchor],
-        [_rule.topAnchor constraintEqualToAnchor:_desc.bottomAnchor constant:14],
+        [_battery.topAnchor constraintEqualToAnchor:_desc.bottomAnchor constant:8],
+        [_battery.leadingAnchor constraintEqualToAnchor:g.leadingAnchor],
+        [_battery.trailingAnchor constraintEqualToAnchor:g.trailingAnchor],
+        [_rule.topAnchor constraintEqualToAnchor:_battery.bottomAnchor constant:14],
         [_rule.leadingAnchor constraintEqualToAnchor:g.leadingAnchor],
         [_rule.trailingAnchor constraintEqualToAnchor:g.trailingAnchor],
         [_rule.heightAnchor constraintEqualToConstant:1],
@@ -247,6 +252,7 @@ static UILabel *pill(UIFont *font) {
     if (a[@"author"]) [meta addObject:[@"by " stringByAppendingString:a[@"author"]]];
     _meta.text = [meta componentsJoinedByString:@"  ·  "];
     _desc.text = a[@"description"];
+    _battery.attributedText = MRGAddonBatteryLine(a[@"id"], [UIFont systemFontOfSize:13 weight:UIFontWeightMedium]);
     _chip.text = [a[@"type"] length] ? [NSString stringWithFormat:@"  %@  ", a[@"type"]] : nil;
     _chip.hidden = !_chip.text.length;
     NSString *mine = a[@"id"];
@@ -530,5 +536,10 @@ UIViewController *MRGAddonSettingsFor(NSString *addonID) {
     if (!addon || !MRGAddonInstalled(addonID)) return nil;
     UIViewController *page = nil;
     @try { page = [addon respondsToSelector:@selector(addonSettingsController)] ? [addon addonSettingsController] : nil; } @catch (NSException *e) {}
+    // A page of the add-on's own gets the battery line too, when it has no header of its own.
+    if ([page isKindOfClass:UITableViewController.class]) {
+        UITableViewController *tvc = (UITableViewController *)page;
+        if (!tvc.tableView.tableHeaderView) tvc.tableView.tableHeaderView = MRGAddonBatteryHeader(addonID, UIScreen.mainScreen.bounds.size.width);
+    }
     return page ?: MRGAddonSettingsPage(addon.addonID);
 }

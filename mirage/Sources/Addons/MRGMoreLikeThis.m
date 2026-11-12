@@ -225,6 +225,8 @@ static void likeThisPlaylist(void (^done)(NSArray *tracks, NSString *name, NSStr
 - (NSString *)addonCategory { return @"Library"; }
 - (NSString *)addonVersion { return @"1.0"; }
 - (NSString *)addonDescription { return @"Songs like what's playing or like its playlist, queued or saved as a playlist."; }
+- (NSInteger)addonBatteryImpact { return 0; }
+- (NSString *)addonBatteryNote { return @"Low: works only when you use it."; }
 - (NSArray<MRGAddonSetting *> *)addonSettings { return @[]; }
 - (UIViewController *)addonSettingsController { return [MRGMoreLikePage new]; }
 - (void)addonDidEnable {}

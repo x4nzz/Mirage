@@ -167,6 +167,8 @@ static void playList(NSArray<NSDictionary *> *list, NSUInteger from, void (^done
 - (NSString *)addonCategory { return @"Library"; }
 - (NSString *)addonVersion { return @"1.0"; }
 - (NSString *)addonDescription { return @"Recently played and this week's most played, from your real history."; }
+- (NSInteger)addonBatteryImpact { return 0; }
+- (NSString *)addonBatteryNote { return @"Low: reads your history when you open it."; }
 - (NSArray<MRGAddonSetting *> *)addonSettings { return @[]; }
 - (UIViewController *)addonSettingsController { return [MRGOnRepeatPage new]; }
 - (void)addonDidEnable {}

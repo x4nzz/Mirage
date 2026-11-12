@@ -208,6 +208,8 @@ static NSInteger channel(NSString *key) {
 - (NSString *)addonCategory { return @"Look"; }
 - (NSString *)addonVersion { return @"1.0"; }
 - (NSString *)addonDescription { return @"Tints Mirage's accent and Vitrine's glass from the album cover."; }
+- (NSInteger)addonBatteryImpact { return 0; }
+- (NSString *)addonBatteryNote { return @"Low: reads one cover and repaints once per song."; }
 - (NSArray<MRGAddonSetting *> *)addonSettings {
     MRGAddonSetting *strengthRow = [MRGAddonSetting slider:@"strength" title:@"Strength" min:0 max:1 fallback:0.75];
     strengthRow.footer = nil;

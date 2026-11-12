@@ -138,6 +138,8 @@ static void resolve(NSDictionary *now) {
 - (NSString *)addonCategory { return @"Now Playing"; }
 - (NSString *)addonVersion { return @"1.0"; }
 - (NSString *)addonDescription { return @"The playing song's genres, under its title on Now Playing."; }
+- (NSInteger)addonBatteryImpact { return 0; }
+- (NSString *)addonBatteryNote { return @"Low: one lookup per song."; }
 - (NSArray<MRGAddonSetting *> *)addonSettings { return @[]; }
 - (void)addonDidEnable { resolve(MRGNowPlaying()); }
 - (void)addonDidDisable { publish(nil); }
