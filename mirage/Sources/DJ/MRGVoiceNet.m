@@ -142,6 +142,7 @@ static NSString *jsDate(void) {
 
 static NSString *hexID(void) { return [[NSUUID.UUID.UUIDString stringByReplacingOccurrencesOfString:@"-" withString:@""] lowercaseString]; }
 
+static const int kEdgeTries = 3;
 static double sg_edgeSkew;   // server clock minus ours, learned from a refused handshake's Date header
 
 // 0.5.1: the websocket gets its own session with a delegate, and nothing is sent until the upgrade (HTTP 101) has
@@ -229,11 +230,25 @@ static void edgeRun(NSString *text, NSString *voice, double speed, double pitch,
         socket.failed = nil;
         [task cancel];
         [session finishTasksAndInvalidate];
-        MRGDJLog(@"voice: Edge %@, trying once more", why);
-        dispatch_async(dispatch_get_main_queue(), ^{ edgeRun(text, voice, speed, pitch, volume, attempt + 1, done); });
+        // 0.6.8: up to three tries, each on a fresh connection (new ConnectionId, MUID and token), a little apart:
+        // Microsoft resets a socket now and then right after the upgrade, and an immediate retry often met the same.
+        double wait = attempt == 0 ? 0.35 : 1.2;
+        MRGDJLog(@"voice: Edge %@, trying again in %.1fs (%d of %d)", why, wait, attempt + 2, kEdgeTries);
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(wait * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ edgeRun(text, voice, speed, pitch, volume, attempt + 1, done); });
     };
     socket.closed = ^(NSInteger code, NSString *reason) { closeCode = code; closeReason = reason; };
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(20 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ if (!over) end(@"Microsoft's free voice timed out"); });
+    // Timeouts per try: 6 s to open, 9 s more for the first audio, 18 s in all; a try that runs out is tried again.
+    __block BOOL opened = NO;
+    __block BOOL heard = NO;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if (over || opened) return;
+        if (attempt + 1 < kEdgeTries) retry(@"didn't open in 6s"); else end(@"Microsoft's free voice didn't answer");
+    });
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(15 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if (over || heard) return;
+        if (attempt + 1 < kEdgeTries) retry(@"sent no audio in 15s"); else end(@"Microsoft's free voice timed out");
+    });
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(18 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ if (!over) end(@"Microsoft's free voice timed out"); });
     onError = ^(NSError *error) {
         NSHTTPURLResponse *resp = [task.response isKindOfClass:NSHTTPURLResponse.class] ? (NSHTTPURLResponse *)task.response : nil;
         NSInteger st = resp.statusCode;
@@ -253,10 +268,11 @@ static void edgeRun(NSString *text, NSString *voice, double speed, double pitch,
         if (st == 101 || code > 0) {
             // The socket opened and Microsoft closed it: its reason says why.
             NSString *why = code > 0 ? edgeClosedText(code, reason) : [NSString stringWithFormat:@"Microsoft's free voice dropped the connection (%@ %ld)", error.domain ?: @"?", (long)error.code];
-            if (attempt == 0 && !audio.length) { retry(why); return; }
+            if (attempt + 1 < kEdgeTries && !audio.length) { retry(why); return; }
             end(why);
             return;
         }
+        if (!st && attempt + 1 < kEdgeTries && !audio.length) { retry([NSString stringWithFormat:@"couldn't connect (%@ %ld)", error.domain ?: @"?", (long)error.code]); return; }
         end(st ? [NSString stringWithFormat:@"Microsoft's free voice refused the connection (HTTP %ld)%@", (long)st, st == 403 ? @"; Microsoft may have changed it" : @""]
                : [NSString stringWithFormat:@"Microsoft's free voice: %@ (%@ %ld)", error.localizedDescription ?: @"connection failed", error.domain ?: @"?", (long)error.code]);
         return;
@@ -276,6 +292,7 @@ static void edgeRun(NSString *text, NSString *voice, double speed, double pitch,
                     NSUInteger hl = ((NSUInteger)b[0] << 8) | b[1];
                     if (2 + hl <= msg.data.length) {
                         NSString *head = [[NSString alloc] initWithData:[msg.data subdataWithRange:NSMakeRange(2, hl)] encoding:NSUTF8StringEncoding];
+                        if ([head containsString:@"Path:audio"] && 2 + hl < msg.data.length) heard = YES;
                         if ([head containsString:@"Path:audio"] && 2 + hl < msg.data.length)
                             [audio appendData:[msg.data subdataWithRange:NSMakeRange(2 + hl, msg.data.length - 2 - hl)]];
                     }
@@ -296,6 +313,7 @@ static void edgeRun(NSString *text, NSString *voice, double speed, double pitch,
                       voice, pct, rate, vol, xmlEscaped(text)];
     NSString *say = [NSString stringWithFormat:@"X-RequestId:%@\r\nContent-Type:application/ssml+xml\r\nX-Timestamp:%@Z\r\nPath:ssml\r\n\r\n%@", hexID(), jsDate(), ssml];
     socket.opened = ^{
+        opened = YES;
         if (over) return;
         if (receive) receive();
         [task sendMessage:[[NSURLSessionWebSocketMessage alloc] initWithString:config] completionHandler:^(NSError *e1) {

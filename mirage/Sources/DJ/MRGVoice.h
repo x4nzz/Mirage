@@ -75,4 +75,9 @@ void MRGVoicePreparePreset(NSString *presetID, void (^done)(NSString *message));
 // Says `text` with the current settings; `engine`/`voice` override them for previews (pass -1 / nil to use settings).
 - (void)speak:(NSString *)text engine:(NSInteger)engine voice:(NSString *)voice started:(void (^)(void))started finished:(void (^)(void))finished;
 - (void)stop;
+// 0.6.8: fetches a line's audio ahead with the current settings and keeps it, so saying it later starts at once.
+- (void)prefetch:(NSString *)text;
 @end
+// 0.6.8: ElevenLabs goes first whenever a key is saved (on by default); the free voice backs it up.
+BOOL MRGVoicePrefersEleven(void);
+void MRGVoiceSetPrefersEleven(BOOL on);

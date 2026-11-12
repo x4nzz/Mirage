@@ -705,84 +705,188 @@ static NSString *withPauses(NSString *text, NSString *mark) {
     [self finish];
 }
 
+// 0.6.8 root cause of "the free voice fails and the ugly iPhone voice talks": Microsoft's endpoint resets a socket
+// now and then right after the upgrade (NSPOSIXErrorDomain 54 in the diagnostics). One immediate retry wasn't enough,
+// nothing was fetched ahead, and the first failure went straight to the phone's default voice. Now:
+//  - the order is ElevenLabs first when a key is saved (unless turned off), then the free voice, then the AI provider's
+//    voice when it has one, and the phone's best Premium / Enhanced voice only when all of them failed;
+//  - the free voice retries with backoff and its own timeouts (MRGVoiceNet.m);
+//  - lines are fetched ahead (prefetch:) and kept, so a line is often ready before it is said.
+static NSCache *sg_lineCache;
+static NSMutableDictionary<NSString *, NSMutableArray *> *sg_inflight;   // cache key → waiting completions
+
+BOOL MRGVoicePrefersEleven(void) { id v = [D() objectForKey:@"mirage.dj.preferEleven"]; return [v isKindOfClass:NSNumber.class] ? [v boolValue] : YES; }
+void MRGVoiceSetPrefersEleven(BOOL on) { [D() setBool:on forKey:@"mirage.dj.preferEleven"]; }
+
+// The engines to try, in order, for the settings' engine (or one picked for a preview).
+static NSArray<NSNumber *> *engineChain(NSInteger engineArg) {
+    if (engineArg >= 0) return @[@(engineArg)];   // a preview tries the engine it is a preview of
+    MRGVoiceEngine e = MRGVoiceGetEngine();
+    NSMutableArray *out = [NSMutableArray array];
+    BOOL eleven = MRGElevenHasKey() && (e == MRGVoiceEngineEleven || (MRGVoicePrefersEleven() && e != MRGVoiceEnginePhone));
+    if (e == MRGVoiceEngineProvider && MRGProviderHasTTS(MRGAIProvider())) [out addObject:@(MRGVoiceEngineProvider)];
+    if (eleven) [out addObject:@(MRGVoiceEngineEleven)];
+    if (e != MRGVoiceEnginePhone) [out addObject:@(MRGVoiceEngineFree)];
+    if (e != MRGVoiceEngineProvider && e != MRGVoiceEnginePhone && MRGProviderHasTTS(MRGAIProvider()) && [D() boolForKey:@"mirage.dj.providerFallback"]) [out addObject:@(MRGVoiceEngineProvider)];
+    return out;
+}
+
+static NSString *voiceFor(MRGVoiceEngine e, NSString *voice, BOOL primary) {
+    if (primary && voice.length) return voice;
+    switch (e) {
+        case MRGVoiceEngineEleven: return MRGElevenVoice();
+        case MRGVoiceEngineFree: return MRGEdgeVoice();
+        case MRGVoiceEngineProvider: return MRGVoiceProviderVoice();
+        default: return nil;
+    }
+}
+
+static NSString *engineLabel(MRGVoiceEngine e, NSString *voice) {
+    if (e == MRGVoiceEngineFree) {
+        for (NSDictionary *x in MRGEdgeVoices()) if ([x[@"id"] isEqualToString:voice]) return [@"Free · " stringByAppendingString:x[@"name"]];
+        return [@"Free · " stringByAppendingString:voice ?: @"voice"];
+    }
+    if (e == MRGVoiceEngineEleven) return @"ElevenLabs";
+    return MRGProviderName(MRGAIProvider());
+}
+
+static NSString *cacheKey(MRGVoiceEngine e, NSString *voice, NSString *text) {
+    return [NSString stringWithFormat:@"%ld|%@|%.2f|%.2f|%.2f|%@", (long)e, voice ?: @"", MRGVoiceSpeed(), MRGVoicePitch(), MRGVoicePause(), text];
+}
+
+// One engine's audio for a line, from the cache or fetched (one fetch per line, however many ask).
+static void fetchLine(MRGVoiceEngine e, NSString *voice, NSString *text, void (^done)(NSData *audio, NSString *error)) {
+    if (!sg_lineCache) { sg_lineCache = [NSCache new]; sg_lineCache.totalCostLimit = 6 * 1024 * 1024; sg_inflight = [NSMutableDictionary dictionary]; }
+    NSString *key = cacheKey(e, voice, text);
+    NSData *hit = [sg_lineCache objectForKey:key];
+    if (hit) { done(hit, nil); return; }
+    NSMutableArray *waiting = sg_inflight[key];
+    if (waiting) { [waiting addObject:[done copy]]; return; }
+    waiting = [NSMutableArray arrayWithObject:[done copy]];
+    sg_inflight[key] = waiting;
+    void (^got)(NSData *, NSString *) = ^(NSData *audio, NSString *error) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            NSArray *all = [sg_inflight[key] copy];
+            [sg_inflight removeObjectForKey:key];
+            if (audio.length) [sg_lineCache setObject:audio forKey:key cost:audio.length];
+            for (void (^d)(NSData *, NSString *) in all) d(audio, error);
+        });
+    };
+    double speed = MRGVoiceSpeed(), pause = MRGVoicePause();
+    switch (e) {
+        case MRGVoiceEngineEleven: {
+            if (!MRGElevenHasKey()) { got(nil, @"there's no ElevenLabs key"); return; }
+            NSString *said = pause >= 0.3 ? withPauses(text, [NSString stringWithFormat:@" <break time=\"%.1fs\" />", MIN(1.5, pause)]) : text;
+            elevenSpeech(said, voice, speed, got);
+            return;
+        }
+        case MRGVoiceEngineFree: {
+            NSString *said = pause >= 0.4 ? withPauses(text, @"...") : text;
+            MRGEdgeSpeech(said, voice, speed, MRGVoicePitch(), got);
+            return;
+        }
+        case MRGVoiceEngineProvider: {
+            MRGProvider p = MRGAIProvider();
+            if (!MRGProviderHasTTS(p)) { got(nil, @"the AI provider has no voice"); return; }
+            NSString *said = (p == MRGProviderGroq || p == MRGProviderXAI) && pause >= 0.5 ? withPauses(text, @"...") : text;
+            MRGAISpeech(said, voice, speed, MRGVoiceInstructions(), got);
+            return;
+        }
+        default: got(nil, @"no network voice"); return;
+    }
+}
+
+// The best voice on the phone for a last resort: Personal, then Premium, then Enhanced, in the preset's gender when
+// there is one, never a Default-quality voice while a better one is installed.
+static AVSpeechSynthesisVoice *bestFallbackVoice(void) {
+    NSString *gender = [activePreset()[@"gender"] isKindOfClass:NSString.class] ? activePreset()[@"gender"] : nil;
+    NSArray<AVSpeechSynthesisVoice *> *all = MRGVoicePhoneVoices();   // best first
+    if (gender.length) {
+        AVSpeechSynthesisVoice *g = bestPhoneVoice(gender);
+        if (g && voiceScore(g) >= voiceScore(all.firstObject)) return g;
+    }
+    AVSpeechSynthesisVoice *saved = MRGVoicePhoneVoice();
+    if (saved && voiceScore(saved) >= voiceScore(all.firstObject)) return saved;
+    return all.firstObject ?: saved;
+}
+
+- (void)prefetch:(NSString *)text {
+    if (!text.length || MRGVoiceGetEngine() == MRGVoiceEngineOff) return;
+    NSArray<NSNumber *> *chain = engineChain(-1);
+    if (!chain.count) return;
+    MRGVoiceEngine e = (MRGVoiceEngine)chain.firstObject.integerValue;
+    fetchLine(e, voiceFor(e, nil, YES), text, ^(NSData *audio, NSString *error) {
+        if (!audio && chain.count > 1) {
+            MRGVoiceEngine e2 = (MRGVoiceEngine)chain[1].integerValue;
+            fetchLine(e2, voiceFor(e2, nil, NO), text, ^(NSData *a2, NSString *e2r) {});
+        }
+    });
+}
+
+- (BOOL)playAudio:(NSData *)audio {
+    _audio = [[AVAudioPlayer alloc] initWithData:audio error:nil];
+    _audio.delegate = self;
+    BOOL playing = _audio && [_audio play];
+    if (playing) _audioStarted = CACurrentMediaTime();
+    return playing;
+}
+
 - (void)speak:(NSString *)text engine:(NSInteger)engineArg voice:(NSString *)voice started:(void (^)(void))started finished:(void (^)(void))finished {
     [self stop];
     NSUInteger token = ++_token;
     _finished = [finished copy];
     _busyLine = YES;
-    MRGVoiceEngine engine = engineArg >= 0 ? (MRGVoiceEngine)engineArg : MRGVoiceGetEngine();
-    double speed = MRGVoiceSpeed();
-    void (^play)(NSData *, NSString *, NSString *) = ^(NSData *audio, NSString *error, NSString *what) {
-        if (token != self->_token) return;
-        if (audio) {
-            self->_audio = [[AVAudioPlayer alloc] initWithData:audio error:nil];
-            self->_audio.delegate = self;
-            BOOL playing = self->_audio && [self->_audio play];
-            if (playing) self->_audioStarted = CACurrentMediaTime();
-            if (playing && [what hasPrefix:@"Free"]) { static BOOL said; if (!said) { said = YES; MRGDJLog(@"voice: %@ spoke (%lu KB from Microsoft's free voice)", what, (unsigned long)(audio.length / 1024)); } }
-            if (playing) { [self report:[NSString stringWithFormat:@"✓ %@ spoke", engine == MRGVoiceEngineEleven ? engineSummary() : what] failed:NO]; if (started) started(); return; }
-        }
-        if (engine == MRGVoiceEngineEleven) {
-            // Never Samantha in place of an ElevenLabs voice the listener picked: the error is shown instead.
-            NSString *msg = error ?: @"ElevenLabs sent audio that couldn't be played";
-            MRGDJLog(@"voice: ElevenLabs failed, not falling back to the phone voice: %@", msg);
-            [self report:[@"✗ " stringByAppendingString:msg] failed:YES];
-            [self finish];
+    MRGVoiceEngine picked = engineArg >= 0 ? (MRGVoiceEngine)engineArg : MRGVoiceGetEngine();
+    if (picked == MRGVoiceEnginePhone || (engineArg < 0 && picked == MRGVoiceEngineOff)) {
+        AVSpeechSynthesisVoice *pv = (voice ? [AVSpeechSynthesisVoice voiceWithIdentifier:voice] : nil) ?: MRGVoicePhoneVoice();
+        [self report:[NSString stringWithFormat:@"✓ iPhone · %@ spoke", pv.name ?: @"voice"] failed:NO];
+        [self speakOnPhone:text voice:voice started:started];
+        return;
+    }
+    NSArray<NSNumber *> *chain = engineChain(engineArg);
+    NSMutableArray<NSString *> *errors = [NSMutableArray array];
+    __block NSUInteger step = 0;
+    __block void (^tryNext)(void);
+    __weak MRGVoiceSpeaker *weakSelf = self;
+    tryNext = ^{
+        MRGVoiceSpeaker *me = weakSelf;
+        if (!me || token != me->_token) { tryNext = nil; return; }
+        if (step >= chain.count) {
+            tryNext = nil;
+            NSString *why = errors.count ? [errors componentsJoinedByString:@"; "] : @"no voice answered";
+            if (engineArg == MRGVoiceEngineEleven) {
+                // A preview of an ElevenLabs voice shows ElevenLabs' own error, never another voice.
+                [me report:[@"✗ " stringByAppendingString:why] failed:YES];
+                [me finish];
+                return;
+            }
+            AVSpeechSynthesisVoice *best = bestFallbackVoice();
+            MRGDJLog(@"voice: %@; the iPhone's %@ voice (%@) as a last resort", why, best.name ?: @"best", best ? MRGVoiceQualityName(best) : @"?");
+            [me report:[NSString stringWithFormat:@"✗ %@; the iPhone voice %@ spoke instead", why, best.name ?: @""] failed:YES];
+            [me speakOnPhone:text voice:best.identifier started:started];
             return;
         }
-        if (engine == MRGVoiceEngineProvider && ![what hasPrefix:@"Free"]) {
-            // The provider's voice failed: the free voice says it, and the line says so.
-            MRGDJLog(@"voice: %@ failed (%@), the free voice instead", what, error ?: @"unplayable audio");
-            NSString *why = error ?: @"unplayable audio";
-            MRGEdgeSpeech(withPauses(text, @"..."), nil, speed, MRGVoicePitch(), ^(NSData *a2, NSString *e2) {
-                if (token != self->_token) return;
-                if (a2) {
-                    self->_audio = [[AVAudioPlayer alloc] initWithData:a2 error:nil];
-                    self->_audio.delegate = self;
-                    if (self->_audio && [self->_audio play]) { self->_audioStarted = CACurrentMediaTime(); [self report:[NSString stringWithFormat:@"✗ %@ failed (%@); the free voice spoke instead", what, why] failed:YES]; if (started) started(); return; }
-                }
-                [self report:[NSString stringWithFormat:@"✗ %@ failed (%@) and so did the free voice (%@); the iPhone voice spoke", what, why, e2 ?: @"?"] failed:YES];
-                [self speakOnPhone:text voice:nil started:started];
-            });
-            return;
-        }
-        // The free voice failing: the iPhone voice speaks, and the reason is shown (and logged) once, not on every line.
-        static NSString *shownReason;
-        NSString *why = error ?: @"unplayable audio";
-        if ([what hasPrefix:@"Free"] && [shownReason isEqualToString:why]) { [self speakOnPhone:text voice:nil started:started]; return; }
-        if ([what hasPrefix:@"Free"]) shownReason = [why copy];
-        MRGDJLog(@"voice: %@ failed (%@), phone voice instead", what, why);
-        [self report:[NSString stringWithFormat:@"✗ %@ failed (%@); the iPhone voice spoke instead", what, why] failed:YES];
-        [self speakOnPhone:text voice:nil started:started];
+        MRGVoiceEngine e = (MRGVoiceEngine)chain[step].integerValue;
+        NSString *v = voiceFor(e, voice, step == 0 && engineArg >= 0 ? YES : (step == 0 && voice != nil));
+        NSString *what = engineLabel(e, v);
+        step++;
+        fetchLine(e, v, text, ^(NSData *audio, NSString *error) {
+            MRGVoiceSpeaker *s = weakSelf;
+            if (!s || token != s->_token) { tryNext = nil; return; }
+            if (audio && [s playAudio:audio]) {
+                tryNext = nil;
+                NSString *label = e == MRGVoiceEngineEleven ? engineSummary() : what;
+                if (errors.count) MRGDJLog(@"voice: %@ spoke after %@", what, [errors componentsJoinedByString:@"; "]);
+                [s report:errors.count ? [NSString stringWithFormat:@"✓ %@ spoke (%@)", label, [errors componentsJoinedByString:@"; "]] : [NSString stringWithFormat:@"✓ %@ spoke", label] failed:NO];
+                if (started) started();
+                return;
+            }
+            [errors addObject:[NSString stringWithFormat:@"%@ failed (%@)", what, error ?: @"unplayable audio"]];
+            void (^next)(void) = tryNext;
+            if (next) next();
+        });
     };
-    double pause = MRGVoicePause();
-    if (engine == MRGVoiceEngineProvider && MRGProviderHasTTS(MRGAIProvider())) {
-        MRGProvider p = MRGAIProvider();
-        // Engines without a style prompt get their pauses as ellipses.
-        NSString *said = (p == MRGProviderGroq || p == MRGProviderXAI) && pause >= 0.5 ? withPauses(text, @"...") : text;
-        MRGAISpeech(said, voice ?: MRGVoiceProviderVoice(), speed, MRGVoiceInstructions(), ^(NSData *audio, NSString *error) { play(audio, error, MRGProviderName(MRGAIProvider())); });
-        return;
-    }
-    if (engine == MRGVoiceEngineFree) {
-        NSString *said = pause >= 0.4 ? withPauses(text, @"...") : text;
-        NSString *v = voice ?: MRGEdgeVoice(), *vname = v;
-        for (NSDictionary *x in MRGEdgeVoices()) if ([x[@"id"] isEqualToString:v]) vname = x[@"name"];
-        MRGEdgeSpeech(said, v, speed, MRGVoicePitch(), ^(NSData *audio, NSString *error) { play(audio, error, [@"Free · " stringByAppendingString:vname]); });
-        return;
-    }
-    if (engine == MRGVoiceEngineEleven && MRGElevenHasKey()) {
-        NSString *said = pause >= 0.3 ? withPauses(text, [NSString stringWithFormat:@" <break time=\"%.1fs\" />", MIN(1.5, pause)]) : text;
-        elevenSpeech(said, voice ?: MRGElevenVoice(), speed, ^(NSData *audio, NSString *error) { play(audio, error, @"ElevenLabs"); });
-        return;
-    }
-    if (engine == MRGVoiceEngineEleven && !MRGElevenHasKey()) {
-        [self report:@"✗ ElevenLabs is picked but there's no ElevenLabs key" failed:YES];
-        [self finish];
-        return;
-    }
-    AVSpeechSynthesisVoice *pv = (engine == MRGVoiceEnginePhone && voice ? [AVSpeechSynthesisVoice voiceWithIdentifier:voice] : nil) ?: MRGVoicePhoneVoice();
-    [self report:[NSString stringWithFormat:@"✓ iPhone · %@ spoke", pv.name ?: @"voice"] failed:NO];
-    [self speakOnPhone:text voice:(engine == MRGVoiceEnginePhone ? voice : nil) started:started];
+    tryNext();
 }
 
 // Sentence by sentence, with the pause setting after each (the last one ends the line).

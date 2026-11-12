@@ -1635,6 +1635,14 @@ static NSString *plain(NSString *s) {
             });
         }
     }
+    // The next song's line is fetched now (cached by the speaker), so it starts the moment its song does.
+    if (index + 1 < (NSInteger)_set.count) {
+        MRGDJTalk talk = MRGDJTalkEffective();
+        NSInteger nth = _talkCount;
+        BOOL talksNext = talk == MRGDJTalkEvery || (talk == MRGDJTalkFew && nth % 3 == 0);
+        NSString *nextLine = _set[index + 1].line;
+        if (talksNext && nextLine.length && MRGVoiceGetEngine() != MRGVoiceEngineOff) [MRGVoiceSpeaker.shared prefetch:nextLine];
+    }
     // Keeps going: the next set is picked a few songs before the end and queued behind this one two songs before the end,
     // so the queue never runs dry (after an artist's catalog: artists like them).
     if (index >= (NSInteger)_set.count - 4 && !_fetchingNext && !_next) [self fetchNext];

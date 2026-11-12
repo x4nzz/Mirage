@@ -180,7 +180,7 @@ static NSArray<NSDictionary *> *listVoices(MRGVoiceEngine e) { return e == MRGVo
         if (last.length) [f appendFormat:@"\nLast test: %@", last];
         return f;
     }
-    if (s == 1) return @"ElevenLabs shows its error instead of swapping voices.";
+    if (s == 1) return MRGElevenHasKey() ? @"With your ElevenLabs key saved, ElevenLabs speaks first and the free voice backs it up. The iPhone's best voice only speaks if both fail." : @"The free voice retries on its own; the iPhone's best voice only speaks if it can't get through.";
     if (s == 2) return nil;
     if (s == 3 && MRGVoiceGetEngine() == MRGVoiceEnginePhone)
         return @"More voices: Settings → Accessibility → Spoken Content → Voices.";
