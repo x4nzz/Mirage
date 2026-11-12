@@ -1,135 +1,59 @@
 # Mirage
 
-**Mirage** is a fork of [Vitrine](https://github.com/meownyaaa/vitrine), which is itself the GPL-3.0 fork of
-[Chroma](https://github.com/skopevoj/spoti.pw) (up to v0.21.1). It adds a second tweak, `mirage/`, next to
-Vitrine's own:
+Spotify for iOS, in glass, with an AI DJ and add-ons. Mirage is a fork of
+[Vitrine](https://github.com/meownyaaa/vitrine), itself the GPL-3.0 fork of
+[spoti.pw / Chroma](https://github.com/skopevoj/spoti.pw) (up to 0.21.1). Vitrine's tweak (`tweak/`) ships
+untouched; Mirage adds its own next to it (`mirage/`).
 
-- **Custom backgrounds**: a picture (PNG/JPG/HEIC), a GIF (converted to a looping MP4) or a video
-  (MP4/MOV, muted, without touching Spotify's audio session), with blur, dim, scale mode and a choice of
-  Home / Now Playing / Library / Everywhere. Since 0.6.0 these live on their own Backgrounds page, several
-  can be saved, and each of those screens can use a different one. It sits behind Vitrine's liquid glass.
-- A **Mirage** row in the side drawer, right below Vitrine's *Mod Settings*, that opens Mirage's settings.
-- **Mirage DJ** (0.2.0): an AI DJ that uses your own API key (OpenAI, Gemini, Anthropic, OpenRouter, Groq, xAI, Perplexity,
-  Cerebras, Fireworks, Together, DeepSeek, Mistral) to pick sets from your taste and talk between tracks. Since 0.3.0: voices
-  (iPhone, provider, ElevenLabs), personas, a chat that answers from your listening history and makes playlists. Since 0.4.0:
-  artist-aware sets, taste from what you actually play, talks like you, player controls and likes, its own settings page. Since 0.4.1:
-  an artist plays their whole catalog then similar artists, labels/crews ("yvl"), playlists/albums/Liked Songs, the queue is replaced
-  on every new request, and voice presets with fine controls. Since 0.4.2: the set is checked against Spotify's real queue and
-  repaired, picks stay near your seeds, the vibe box answers questions, artist/song info cards with sources, two new voice presets. 0.4.3: the queue crash on tapping a song is fixed, Start follows the song playing now, ElevenLabs Ivy / Nicole / Arabella presets. 0.4.4: those presets really speak with ElevenLabs, and ElevenLabs errors are shown instead of the iPhone voice. 0.5.0: "play <song> by <artist>" plays that song first and then similar music, playlist/album requests, no more overlapping sets or voices, free Microsoft Edge voices (unofficial) as the default plus Qwen TTS with your own key, a backup AI key for rate limits, and the Addon Shop with its first addon, Vinyl. 0.5.1: the free voices really speak now (and are what every preset uses), Qwen is gone, Vinyl stays on, and the DJ bar on Now Playing no longer covers the cover, lyrics or title. 0.5.2: the Vinyl crash is fixed and the record now moves with the cover, the DJ stops making up facts, the Now Playing background and DJ bar move with the player when you pull it down, and the Add-on Shop is cleaned up. 0.5.3: Vinyl is bigger, the cover and record now fill the Now Playing art row. 0.5.4: Vinyl is really bigger (about a 305pt cover on a 390pt iPhone, the record peeking 20%), the record no longer gets left behind when you pull the player down, and builds are named with the Mirage version.
-  See [docs/mirage/AI-DJ.md](docs/mirage/AI-DJ.md).
-- **Add-on Shop** (0.5.0, rebuilt in 0.6.0): add-ons are features that ship inside Mirage. The shop turns them on,
-  shows each one's settings, and puts a theme marketplace at the top. Themes are JSON only (colors, accent, glass
-  tint, optional background). 0.6.0 also adds dynamic colors from the cover, Shuffle+, a trash bin, pop-up lyrics
-  on Home, genres on Now Playing, playlist tools, and save/load of settings (no API keys). See
-  [docs/mirage/ADDONS.md](docs/mirage/ADDONS.md) and [CHANGELOG.md](CHANGELOG.md).
+- **Mirage DJ**: sets picked from what you really play, talked over between songs like Spotify's DJ, with your own
+  AI key and a free or ElevenLabs voice. [More](docs/mirage/AI-DJ.md)
+- **Backgrounds**: a picture, GIF or video behind Home, Now Playing or Library.
+- **Add-on Shop**: features that ship inside Mirage, all off until you turn them on. [More](docs/mirage/ADDONS.md)
 
-Vitrine's sources (`tweak/`) are kept as upstream ships them, so `git merge upstream/main` stays clean.
+## Install
 
-- Build: [docs/mirage/BUILDING.md](docs/mirage/BUILDING.md). Linux works through `scripts/mirage-setup-linux.sh` and `scripts/mirage-build.sh`,
-  and macOS or GitHub Actions through `.github/workflows/mirage-ipa.yml`.
-- Install with Ksign: [docs/mirage/INSTALL.md](docs/mirage/INSTALL.md)
+Bring your own decrypted Spotify **9.1.90** IPA (none is shared here), build, then sign and install with Ksign,
+Feather, SideStore or any certificate signer.
 
-Mirage is licensed GPL-3.0 like Vitrine and Chroma ≤ 0.21.1. Bring your own decrypted Spotify IPA. Neither this
-repo nor its workflows publish one.
+    scripts/mirage-setup-linux.sh                   # once (Linux); macOS and GitHub Actions: docs/mirage/BUILDING.md
+    scripts/mirage-build.sh path/to/Spotify.ipa     # out/Mirage-<version>-<spotify>.ipa
 
----
-
-<h1 align="center">Vitrine</h1>
-
-<p align="center">Spotify, in glass.</p>
-
-<p align="center">
-  <img src="https://img.shields.io/badge/iOS-000000?style=for-the-badge&logo=ios&logoColor=white" alt="iOS">
-  <img src="https://img.shields.io/badge/Spotify-9.1.78-1ED760?style=for-the-badge&logo=spotify&logoColor=white" alt="Spotify 9.1.78">
-  <img src="https://img.shields.io/badge/9.1.88-supported-555555?style=for-the-badge&logo=spotify&logoColor=white" alt="Spotify 9.1.88 supported">
-  <img src="https://img.shields.io/badge/Objective--C-3A95E3?style=for-the-badge&logo=apple&logoColor=white" alt="Objective-C">
-  <img src="https://img.shields.io/badge/GitHub_Actions-2671E5?style=for-the-badge&logo=githubactions&logoColor=white" alt="GitHub Actions">
-  <img src="https://img.shields.io/badge/License-GPL_v3-blue?style=for-the-badge" alt="GPL-3.0">
-</p>
-
-<p align="center">
-  <a href="#build-it">Build it</a> ·
-  <a href="docs/tweaks.md">Hack on it</a>
-</p>
-
-<p align="center">
-  <img src="docs/screenshots/now-playing.webp" width="16%" alt="Full screen player with lyrics">
-  <img src="docs/screenshots/album.webp" width="16%" alt="Album">
-  <img src="docs/screenshots/playlist.webp" width="16%" alt="Playlist">
-  <img src="docs/screenshots/queue.webp" width="16%" alt="Queue">
-  <img src="docs/screenshots/live-activity.webp" width="16%" alt="Live Activity on the lock screen">
-  <img src="docs/screenshots/home.webp" width="16%" alt="Home">
-</p>
-
-A no-jailbreak Theos tweak that rebuilds Spotify for iOS in Liquid Glass, injected into your own
-decrypted IPA and signed with your own certificate.
-
-Vitrine is a fork of [spoti.pw](https://github.com/skopevoj/spoti.pw) by Vojtěch Škopek, taken from
-0.21.1 (commit `c790445`, 2026-09-23), the last version released under GPL-3.0, and modified since.
-
-Built and tested on **Spotify 9.1.78**, **Spotify 9.1.88** and **Spotify 9.1.90**.
-The mod hooks Spotify's own classes, which change between releases, so any other version may build and then break.
+Step by step: [docs/mirage/INSTALL.md](docs/mirage/INSTALL.md) · Building: [docs/mirage/BUILDING.md](docs/mirage/BUILDING.md)
 
 | | |
 |---|---|
-| The redesign | **iOS 26+** |
+| The glass redesign | iOS 26+ |
 | Legacy look | iOS 16.1+ |
 | Live Activity | iOS 17+ |
 
-The redesign is `UIGlassEffect`, which only exists from iOS 26. Below that the Redesigned UI switch
-turns it on only after a warning that it is untested there, and a launch with it that hangs goes back
-to Spotify's own screens with everything else the mod adds on top. Both live in Settings → Mod Settings.
+## Add-ons
 
-## Build it
+| Add-on | What it does |
+|---|---|
+| Vinyl | The Now Playing cover becomes a sleeve with a spinning record. |
+| Dynamic colors | Mirage's accent and Vitrine's glass, tinted from the cover. |
+| Shuffle+ | Shuffle with no artist twice in a row. |
+| Trash | Trashed songs are skipped everywhere. |
+| Pop-up lyrics | A synced lyrics shelf on Home; tap it for the lyrics view. |
+| Genres | The song's genres on Now Playing. |
+| Playlist tools | Sort a playlist, remove duplicates, or save a shuffled copy. |
+| Radio | An endless station that learns from your skips and likes. |
+| Focus mode | Just the cover and the controls, on black. |
+| On repeat | Your most played lately, from your real history. |
+| More like this | Songs like what's playing, queued or saved. |
+| Cover ring | The song's progress as a ring round the cover. |
+| Lyrics backdrop | The cover moves beside the title; big synced lyrics take its place. |
+| Queue tools | Reorder the real queue, Play next, queue after the album. |
+| Up Next | The next songs on the cover. |
 
-No IPA is distributed. Bring a decrypted **Spotify 9.1.78**, **9.1.88** or **9.1.90** IPA; you get an unsigned
-`vitrine-<mod version>.ipa` to sign with SideStore, Feather or any certificate signer. Releases have no `.deb`:
-injected by hand, the tweak alone misses the app changes the redesign needs (its glass tab bar), the Live
-Activity, Music Haptics in the background and Connect's local discovery, so build the IPA instead.
+Details and settings: [docs/mirage/ADDONS.md](docs/mirage/ADDONS.md). Changes: [CHANGELOG.md](CHANGELOG.md).
+Vitrine's own docs: [docs/tweaks.md](docs/tweaks.md).
 
-### Build with GitHub Actions
+## Credits and license
 
-Fork the repo, enable Actions, run **Build IPA from your own Spotify IPA**. It takes a direct link to
-your decrypted `.ipa` and hands the built IPA back as a workflow artifact. No Mac needed; the link is
-masked in the log and the result stays in your fork.
+Built on [Vitrine](https://github.com/meownyaaa/vitrine) and
+[spoti.pw](https://github.com/skopevoj/spoti.pw) by Vojtěch Škopek (0.21.1, the last GPL-3.0 release), with
+[cyan](https://github.com/asdfzxcvbn/pyzule-rw), [Theos](https://theos.dev), [FLEX](https://github.com/FLEXTool/FLEX)
+and [EeveeSpotify Reincarnated](https://github.com/SideloadLabs/EeveeSpotifyReincarnated).
 
-### Build on a Mac
-
-Theos in `~/theos` and Xcode with an iPhoneOS 26+ SDK (`xcode-select` it). An SDK in `~/theos/sdks`
-alone builds too, but without the Live Activity. Then:
-
-    brew install make ldid dpkg zsign libimobiledevice
-    uv tool install "cyan @ git+https://github.com/asdfzxcvbn/pyzule-rw"
-
-Put the decrypted `.ipa` in `ipa/`, then:
-
-    make release    # out/vitrine-<version>.ipa, ready to sign
-    make install    # the same, signed with your certificate and installed over USB or Wi-Fi
-
-`scripts/pipeline.sh <ipa> --no-flex --keep-watch` keeps Spotify's Apple Watch app (**untested**). Only its
-arm64 build survives decryption on an iPhone, so it can run only on an Apple Watch Series 9, Ultra 2 or newer, and
-it needs a signer that renames the Watch app to your App ID and signs it with a profile of its own that includes the
-Watch. `make install` does not do that yet.
-
-`make install` reads `SIGN_P12`, `SIGN_PROFILE` and `SIGN_P12_PASSWORD` from `.signing.env`; copy
-`.signing.env.example` and fill it in.
-
-The first build spends a minute reading Spotify's flags out of your IPA. `make flags` regenerates it.
-
-### Signing
-
-Sign with a bundle id matching your certificate's App ID. If it doesn't match, the app still works
-but tapping the player on the lock screen won't open it — and it tells you on first launch which id
-to use. In Feather, copy the App ID into **Identifier** and leave **PPQ protection** off; AltStore,
-SideStore and Sideloadly get this right on their own.
-
-The app keeps Spotify's bundle id, so it installs over the real Spotify.
-
-## Credits
-
-[cyan](https://github.com/asdfzxcvbn/pyzule-rw) injects, [Theos](https://theos.dev) builds, and
-[FLEX](https://github.com/FLEXTool/FLEX), as hopeless's AutoFLEX build in `vendor/`, is the inspector
-the view trees are read through. The ad blocking and the Premium state are ported from
-[EeveeSpotify Reincarnated](https://github.com/SideloadLabs/EeveeSpotifyReincarnated).
-
-GPL-3.0. Not affiliated with Spotify.
+GPL-3.0, like Vitrine and spoti.pw. Not affiliated with Spotify.
