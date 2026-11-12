@@ -18,6 +18,8 @@ static char kRingKey;
 
 static NSInteger colorMode(void) { return MRGAddonInteger(kAddon, @"color", 0); }   // 0 accent, 1 cover, 2 white
 static CGFloat thickness(void) { return MIN(6, MAX(1.5, MRGAddonNumber(kAddon, @"width", 3))); }
+static BOOL showTrack(void) { return MRGAddonFlag(kAddon, @"track", YES); }   // the faint unplayed part of the ring
+static BOOL glows(void) { return MRGAddonFlag(kAddon, @"glow", NO); }
 
 @interface MRGCoverRingView : UIView
 @property (nonatomic, weak) UIView *tilt;
@@ -47,6 +49,7 @@ static CGFloat thickness(void) { return MIN(6, MAX(1.5, MRGAddonNumber(kAddon, @
     NSNotificationCenter *nc = NSNotificationCenter.defaultCenter;
     [nc addObserver:self selector:@selector(trackChanged) name:MRGPlayerTrackChangedNotification object:nil];
     [nc addObserver:self selector:@selector(refresh) name:NSProcessInfoPowerStateDidChangeNotification object:nil];
+    [nc addObserver:self selector:@selector(refresh) name:MRGSettingsChangedNotification object:nil];
     return self;
 }
 - (void)dealloc { [_timer invalidate]; [NSNotificationCenter.defaultCenter removeObserver:self]; }
@@ -133,7 +136,15 @@ static CGPathRef ringPath(CGRect r, CGFloat radius) {
     double pos = 0, dur = 0;
     BOOL known = MRGPlayerProgress(&pos, &dur) && dur > 1;
     BOOL playing = MRGPlayerIsPlaying(), calm = NSProcessInfo.processInfo.isLowPowerModeEnabled || UIAccessibilityIsReduceMotionEnabled();
-    _bar.strokeColor = [self barColor].CGColor;
+    UIColor *color = [self barColor];
+    _bar.strokeColor = color.CGColor;
+    _track.hidden = !showTrack();
+    // The glow is a shadow in the bar's own color; off in Low Power Mode (a shadow is redrawn as the line moves).
+    BOOL glow = glows() && !NSProcessInfo.processInfo.isLowPowerModeEnabled;
+    _bar.shadowColor = color.CGColor;
+    _bar.shadowOpacity = glow ? 0.9 : 0;
+    _bar.shadowRadius = glow ? 5 : 0;
+    _bar.shadowOffset = CGSizeZero;
     self.hidden = !known;
     if (!known) return;
     double now = MIN(1, MAX(0, pos / dur));
@@ -186,7 +197,10 @@ static void applyCover(UIView *tilt) {
     MRGAddonSetting *color = [MRGAddonSetting picker:@"color" title:@"Color" options:@[@"Accent", @"From the cover", @"White"] values:@[@0, @1, @2] fallback:@0];
     MRGAddonSetting *width = [MRGAddonSetting picker:@"width" title:@"Thickness" options:@[@"Hairline", @"Thin", @"Bold"] values:@[@1.5, @3, @5] fallback:@3];
     width.footer = MRGNowKitRunning() ? @"Progress only: Spotify gives no waveform data." : @"Off on this Spotify build (see About).";
-    return @[color, width];
+    MRGAddonSetting *track = [MRGAddonSetting toggle:@"track" title:@"Show the rest of the ring" fallback:YES];
+    MRGAddonSetting *glow = [MRGAddonSetting toggle:@"glow" title:@"Glow" fallback:NO];
+    glow.footer = @"A soft glow in the ring's color. Off in Low Power Mode.";
+    return @[color, width, track, glow];
 }
 - (void)addonDidEnable {}
 - (void)addonDidDisable {}
