@@ -71,6 +71,9 @@ UIImage *MRGAddonIcon(NSString *addonID, CGFloat side) {
 
 NSString *MRGAddonSymbol(NSString *addonID) {
     NSDictionary *map = @{@"vinyl": @"record.circle", @"dynamic-colors": @"paintpalette.fill", @"playlist-tools": @"list.bullet.rectangle.fill",
-                          @"genres": @"tag.fill", @"popup-lyrics": @"quote.bubble.fill", @"trash": @"trash.fill", @"shuffle-plus": @"shuffle"};
+                          @"genres": @"tag.fill", @"popup-lyrics": @"quote.bubble.fill", @"trash": @"trash.fill", @"shuffle-plus": @"shuffle",
+                          @"radio": @"dot.radiowaves.left.and.right", @"focus": @"viewfinder", @"on-repeat": @"repeat",
+                          @"more-like-this": @"sparkles", @"cover-ring": @"circle.circle", @"lyrics-backdrop": @"text.quote",
+                          @"queue-tools": @"list.number", @"up-next": @"text.line.first.and.arrowtriangle.forward"};
     return map[addonID ?: @""] ?: @"puzzlepiece.extension.fill";
 }

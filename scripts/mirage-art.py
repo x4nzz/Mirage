@@ -4,7 +4,8 @@
   scripts/mirage-art.py [preview-dir]
 
 Writes mirage/Sources/Addons/MRGAddonArtData.m (the images as byte arrays, so the phone shows exactly what was
-previewed) and, with a preview dir, every image plus a contact sheet (sheet.png) there.
+previewed) and, with a preview dir, every image plus contact sheets there (sheet.png: the newest add-ons,
+sheet-all.png: all of them).
 
 The style is the original Vinyl card's: a soft, out-of-focus mesh-gradient ground (deep indigo and purple melting
 into a warm tone) with one realistic, glossy, well-lit hero object in the middle, soft contact shadows, specular
@@ -19,7 +20,9 @@ OUT_M = os.path.join(ROOT, "mirage", "Sources", "Addons", "MRGAddonArtData.m")
 W, H = 1080, 608          # 16:9 cover, 3x of a 360 pt card
 ICON = 132                # 44 pt @3x
 SS = 3                    # supersampling for shape masks
-IDS = ["vinyl", "dynamic-colors", "playlist-tools", "genres", "popup-lyrics", "trash", "shuffle-plus", "generic"]
+IDS = ["vinyl", "dynamic-colors", "playlist-tools", "genres", "popup-lyrics", "trash", "shuffle-plus", "generic",
+       "radio", "focus", "on-repeat", "more-like-this", "cover-ring", "lyrics-backdrop", "queue-tools", "up-next"]
+NEW_066 = IDS[8:]
 
 
 # ------------------------------------------------------------------ basics (float RGB in 0..1, masks HxW)
@@ -357,6 +360,14 @@ PAL = {
     "trash":          {"ground": ("#4a1830", "#7a2a2a", "#1a0f22", "#5a1f48"), "art": ("#ff9a8a", "#c2415c", "#ff6f61", "#ffc1b5")},
     "shuffle-plus":   {"ground": ("#3a2478", "#2f5a3a", "#120f2a", "#4a2a8a"), "art": ("#c6f66b", "#6d3fe0", "#8bd43a", "#a78bfa")},
     "generic":        {"ground": ("#33206e", "#5a2a6a", "#140f30", "#3d2a7a"), "art": ("#c4b5fd", "#8b5cf6", "#f0abfc", "#a78bfa")},
+    "radio":          {"ground": ("#4a1f7a", "#7a3a2a", "#160f30", "#5a2a6a"), "art": ("#ffb86b", "#8b3fe0", "#ff7a59", "#c4a1ff")},
+    "focus":          {"ground": ("#24124a", "#3a1a5a", "#05040a", "#2a1450"), "art": ("#b89cff", "#2a1060", "#7c4dff", "#e0d4ff")},
+    "on-repeat":      {"ground": ("#3a1f78", "#7a2a5a", "#120f2a", "#5a2a8a"), "art": ("#ff9ad5", "#7b3fe0", "#ffb35c", "#c4b5fd")},
+    "more-like-this": {"ground": ("#1f3f7a", "#5a2a7a", "#0f1a3a", "#3a2a8a"), "art": ("#8fe3ff", "#5b4dd6", "#f0abfc", "#7dd3fc")},
+    "cover-ring":     {"ground": ("#3d1f78", "#245a5a", "#120f2a", "#4a2a7a"), "art": ("#a3f0c0", "#6d3fe0", "#5eead4", "#c4b5fd")},
+    "lyrics-backdrop":{"ground": ("#5a1f5a", "#2a1f6a", "#140a20", "#6a2a7a"), "art": ("#ffd1f0", "#8b3fe0", "#ff8fb8", "#f5d0fe")},
+    "queue-tools":    {"ground": ("#1f2f6e", "#4a2a78", "#0c1230", "#2a3a8a"), "art": ("#93c5fd", "#4f46e5", "#a78bfa", "#bfdbfe")},
+    "up-next":        {"ground": ("#3a2070", "#6a2a4a", "#140f2a", "#4a2a6a"), "art": ("#fbcfe8", "#7c3aed", "#fda4af", "#ddd6fe")},
 }
 
 
@@ -596,6 +607,234 @@ COVERS = {"vinyl": cover_vinyl, "dynamic-colors": cover_dynamic, "playlist-tools
           "popup-lyrics": cover_lyrics, "trash": cover_trash, "shuffle-plus": cover_shuffle, "generic": cover_generic}
 
 
+# ------------------------------------------------------------------ 0.6.6 covers
+
+def arc_pts(cx, cy, r, a0, a1, n=80):
+    return [(cx + r * math.cos(math.radians(a0 + (a1 - a0) * i / n)), cy + r * math.sin(math.radians(a0 + (a1 - a0) * i / n))) for i in range(n + 1)]
+
+
+def sphere(img, sx, sy, sr, color, light="#ffffff", glow=None):
+    """A glossy ball: soft shadow, a radial body, a specular dot."""
+    sm = mask(W, H, ellipse(sx, sy, sr))
+    if glow:
+        img = over(img, hexc(glow), blur(sm, sr * 0.6) * 0.55)
+    img = shadow(img, sm, sr * 0.35, 0.55, dy=sr * 0.25)
+    xg, yg = grid(W, H)
+    d = np.sqrt((xg - (sx - sr * 0.35)) ** 2 + (yg - (sy - sr * 0.38)) ** 2) / (sr * 1.7)
+    body = hexc(color) * (1.08 - np.clip(d, 0, 1)[..., None] * 0.55)
+    img = over(img, np.clip(body, 0, 1), sm)
+    spec = blur(mask(W, H, ellipse(sx - sr * 0.38, sy - sr * 0.42, sr * 0.22, sr * 0.14)), sr * 0.06)
+    img = over(img, hexc(light), spec * 0.85 * sm)
+    img = over(img, np.ones(3, np.float32), inner_edge(sm, 2.0, 0.25))
+    return img
+
+
+def glass_card(img, x, y, w, h, r, tint="#ffffff", amount=0.14, frost=22, shadow_op=0.45):
+    m = mask(W, H, rrect(x, y, w, h, r))
+    img = shadow(img, m, 26, shadow_op, dy=16)
+    img = frosted(img, m, tint, amount=amount, frost=frost)
+    img = over(img, np.ones(3, np.float32), gloss_sheen(m, 0.08, angle=-80, width=0.4))
+    return img, m
+
+
+def cover_radio():
+    p = PAL["radio"]
+    img = ground(p, 21)
+    cx, cy = W * 0.5, H * 0.52
+    # broadcast waves on both sides, nearest brightest
+    for i, r in enumerate((H * 0.20, H * 0.31, H * 0.42)):
+        col = ["#ffd1a3", "#ffb86b", "#c4a1ff"][i]
+        for a0, a1 in ((-40, 40), (140, 220)):
+            img, _ = tube(img, arc_pts(cx, cy, r, a0, a1, 50), H * 0.040, col, "#fff6ea", shadow_op=0.35)
+    # an endless loop under the orb, faint
+    img = sphere(img, cx, cy, H * 0.11, "#ff8a5c", glow="#ffb86b")
+    return img
+
+
+def cover_focus():
+    p = PAL["focus"]
+    img = ground(p, 22)
+    # a black OLED slab holding just the cover and the three controls
+    pw, ph = H * 0.50, H * 0.86
+    x, y = W * 0.5 - pw / 2, H * 0.5 - ph / 2
+    m = mask(W, H, rrect(x, y, pw, ph, pw * 0.14))
+    img = shadow(img, m, 30, 0.8, dy=20)
+    img = over(img, np.full(3, 0.008, np.float32), m)
+    img = over(img, np.ones(3, np.float32), inner_edge(m, 2.0, 0.30))
+    img = over(img, np.ones(3, np.float32), gloss_sheen(m, 0.06, angle=-65, width=0.35))
+    s = pw * 0.74
+    img, _ = sleeve(img, W * 0.5 - s / 2, y + ph * 0.14, s, p["art"], 23, shadow_op=0.5)
+    ry = y + ph * 0.14 + s + ph * 0.16
+    for k, rad in ((-1, 0.040), (0, 0.062), (1, 0.040)):
+        img = sphere(img, W * 0.5 + k * pw * 0.26, ry, ph * rad, "#f4f0ff" if k == 0 else "#b8a8e8")
+    return img
+
+
+def cover_on_repeat():
+    p = PAL["on-repeat"]
+    img = ground(p, 24)
+    cx, cy, r = W * 0.5, H * 0.5, H * 0.33
+    s = H * 0.36
+    img, _ = sleeve(img, cx - s / 2, cy - s / 2, s, p["art"], 25, shadow_op=0.6)
+    # a glossy repeat loop around it, its arrowhead catching up with its tail
+    img, _ = tube(img, arc_pts(cx, cy, r, -60, 235, 120), H * 0.055, "#ff9ad5", "#fff0fa", shadow_op=0.45)
+    tip = (cx + r * math.cos(math.radians(-60)), cy + r * math.sin(math.radians(-60)))
+    img = arrowhead(img, tip, (math.cos(math.radians(30)), math.sin(math.radians(30))), H * 0.13, "#ff9ad5", "#fff0fa")
+    return img
+
+
+def sparkle(img, cx, cy, r, color):
+    pts = []
+    for i in range(8):
+        a = math.radians(i * 45 - 90)
+        rr = r if i % 2 == 0 else r * 0.28
+        pts.append((cx + rr * math.cos(a), cy + rr * math.sin(a)))
+    m = blur(mask(W, H, polygon(pts)), 1.2)
+    img = over(img, hexc(color), blur(m, r * 0.35) * 0.6)
+    img = shadow(img, m, r * 0.15, 0.4, dy=r * 0.10)
+    img = over(img, hexc(color), m)
+    img = over(img, np.ones(3, np.float32), inner_edge(m, 2, 0.5))
+    return img
+
+
+def cover_more_like_this():
+    p = PAL["more-like-this"]
+    img = ground(p, 26)
+    s = H * 0.42
+    cx, cy = W * 0.46, H * 0.52
+    img, _ = sleeve(img, cx + s * 0.55 - s * 0.36, cy - s * 0.80, s * 0.72, ("#5b4dd6", "#2b3fa8", "#f0abfc", "#7dd3fc"), 27, angle=9, shadow_op=0.5)
+    img, _ = sleeve(img, cx + s * 0.70 - s * 0.36, cy - s * 0.10, s * 0.72, ("#7dd3fc", "#3d2b78", "#c084fc", "#8fe3ff"), 28, angle=-7, shadow_op=0.5)
+    img, _ = sleeve(img, cx - s * 0.75, cy - s / 2, s, p["art"], 29, angle=-3)
+    img = sparkle(img, W * 0.78, H * 0.20, H * 0.08, "#e0f7ff")
+    return img
+
+
+def cover_ring():
+    p = PAL["cover-ring"]
+    img = ground(p, 30)
+    cx, cy = W * 0.5, H * 0.5
+    s = H * 0.50
+    img, _ = sleeve(img, cx - s / 2, cy - s / 2, s, p["art"], 31, radius=s * 0.08)
+    # the track behind the ring, then the glossy progress (about two thirds round)
+    r = s * 0.66
+    track = mask(W, H, stroke(arc_pts(cx, cy, r, 0, 360, 160), H * 0.022))
+    img = over(img, np.ones(3, np.float32), track * 0.12)
+    img, _ = tube(img, arc_pts(cx, cy, r, -90, 150, 120), H * 0.030, "#a3f0c0", "#f2fff7", shadow_op=0.35)
+    hx, hy = cx + r * math.cos(math.radians(150)), cy + r * math.sin(math.radians(150))
+    img = sphere(img, hx, hy, H * 0.030, "#f2fff7", glow="#5eead4")
+    return img
+
+
+def cover_lyrics_backdrop():
+    p = PAL["lyrics-backdrop"]
+    img = ground(p, 32)
+    # a big, dimmed cover filling the middle, the lines large on top of it
+    s = H * 0.80
+    x, y = W * 0.5 - s / 2, H * 0.5 - s / 2
+    img, m = sleeve(img, x, y, s, p["art"], 33, shadow_op=0.6)
+    img = over(img, np.zeros(3, np.float32), m * 0.55)
+    lines = [(0.28, 0.58, 0.35, 18), (0.48, 0.80, 1.0, 34), (0.66, 0.70, 0.55, 26), (0.82, 0.46, 0.25, 18)]
+    for ly, lw, op, th in lines:
+        lm = mask(W, H, rrect(x + s * 0.10, y + s * ly - th / 2, s * lw, th, th / 2))
+        if op == 1.0:
+            img = over(img, hexc("#ffd1f0"), blur(lm, 16) * 0.7)
+        img = over(img, np.ones(3, np.float32), lm * op)
+    return img
+
+
+def cover_queue_tools():
+    p = PAL["queue-tools"]
+    img = ground(p, 34)
+    rw, rh = W * 0.42, H * 0.12
+    x0 = W * 0.5 - rw / 2
+    for i, yy in enumerate((0.26, 0.44, 0.62, 0.80)):
+        lift = i == 1
+        x = x0 + (W * 0.05 if lift else 0)
+        y = H * yy - rh / 2 - (H * 0.02 if lift else 0)
+        img, m = glass_card(img, x, y, rw, rh, rh * 0.35, tint="#dbeafe" if lift else "#ffffff", amount=0.22 if lift else 0.12,
+                            frost=12, shadow_op=0.7 if lift else 0.35)
+        s = rh * 0.70
+        img, _ = sleeve(img, x + rh * 0.18, y + (rh - s) / 2, s, p["art"], 35 + i, shadow_op=0.3, radius=s * 0.12)
+        bar = mask(W, H, rrect(x + rh * 1.15, y + rh * 0.40, rw * (0.50 if i % 2 else 0.38), rh * 0.18, rh * 0.09))
+        img = over(img, np.ones(3, np.float32), bar * (0.9 if lift else 0.5))
+        for k in range(3):
+            g = mask(W, H, rrect(x + rw - rh * 0.55, y + rh * (0.32 + 0.14 * k), rh * 0.30, rh * 0.06, rh * 0.03))
+            img = over(img, np.ones(3, np.float32), g * 0.55)
+    img = arrowhead(img, (x0 - W * 0.05, H * 0.30), (0, -1), H * 0.10, "#93c5fd", "#eff6ff")
+    img = arrowhead(img, (x0 - W * 0.05, H * 0.70), (0, 1), H * 0.10, "#a78bfa", "#f5f3ff")
+    return img
+
+
+def cover_up_next():
+    p = PAL["up-next"]
+    img = ground(p, 38)
+    cw, ch = W * 0.64, H * 0.46
+    x, y = W * 0.5 - cw / 2, H * 0.5 - ch / 2
+    img, m = glass_card(img, x, y, cw, ch, 30, frost=24)
+    lab = mask(W, H, rrect(x + cw * 0.07, y + ch * 0.13, cw * 0.24, ch * 0.08, ch * 0.04))
+    img = over(img, np.ones(3, np.float32), lab * 0.8)
+    s = ch * 0.50
+    pals = [p["art"], ("#ddd6fe", "#5b21b6", "#fda4af", "#c4b5fd"), ("#fda4af", "#9d174d", "#fbcfe8", "#7c3aed")]
+    for i in range(3):
+        img, _ = sleeve(img, x + cw * 0.07 + i * (s + cw * 0.06), y + ch * 0.34, s, pals[i], 39 + i, shadow_op=0.45, radius=s * 0.10)
+    img = arrowhead(img, (x + cw * 0.93, y + ch * 0.60), (1, 0), H * 0.08, "#fbcfe8", "#ffffff")
+    return img
+
+
+COVERS.update({"radio": cover_radio, "focus": cover_focus, "on-repeat": cover_on_repeat, "more-like-this": cover_more_like_this,
+               "cover-ring": cover_ring, "lyrics-backdrop": cover_lyrics_backdrop, "queue-tools": cover_queue_tools, "up-next": cover_up_next})
+
+
+def glyph_066(addon, n):
+    u = n / 12
+    if addon == "radio":
+        m = mask(n, n, ellipse(6 * u, 6 * u, 1.2 * u))
+        for r in (2.4, 3.8):
+            for a0, a1 in ((-45, 45), (135, 225)):
+                m = np.maximum(m, mask(n, n, stroke(arc_pts(6 * u, 6 * u, r * u, a0, a1, 30), 0.7 * u)))
+        return m
+    if addon == "focus":
+        slab = mask(n, n, rrect(3.6 * u, 1.8 * u, 4.8 * u, 8.4 * u, 0.9 * u)) * 0.38
+        cov = mask(n, n, rrect(4.3 * u, 2.7 * u, 3.4 * u, 3.4 * u, 0.4 * u))
+        dots = np.maximum.reduce([mask(n, n, ellipse((6 + k * 1.2) * u, 7.9 * u, (0.55 if k == 0 else 0.4) * u)) for k in (-1, 0, 1)])
+        return np.maximum.reduce([slab, cov, dots])
+    if addon == "on-repeat":
+        ring = mask(n, n, stroke(arc_pts(6 * u, 6 * u, 3.4 * u, -60, 240, 60), 0.9 * u))
+        tip = (6 * u + 3.4 * u * math.cos(math.radians(-60)), 6 * u + 3.4 * u * math.sin(math.radians(-60)))
+        head = mask(n, n, polygon([(tip[0] + 1.3 * u, tip[1] + 0.7 * u), (tip[0] - 0.9 * u, tip[1] - 0.9 * u), (tip[0] - 0.1 * u, tip[1] + 1.4 * u)]))
+        return np.maximum.reduce([ring, head, mask(n, n, rrect(4.9 * u, 4.9 * u, 2.2 * u, 2.2 * u, 0.4 * u))])
+    if addon == "more-like-this":
+        a = mask(n, n, rrect(2.4 * u, 4.2 * u, 4.8 * u, 4.8 * u, 0.6 * u))
+        b = mask(n, n, rrect(5.8 * u, 2.8 * u, 3.6 * u, 3.6 * u, 0.5 * u)) * 0.55
+        pts = []
+        for i in range(8):
+            ang = math.radians(i * 45 - 90)
+            rr = 1.3 * u if i % 2 == 0 else 0.4 * u
+            pts.append((8.9 * u + rr * math.cos(ang), 8.4 * u + rr * math.sin(ang)))
+        return np.maximum.reduce([a, b, mask(n, n, polygon(pts))])
+    if addon == "cover-ring":
+        cov = mask(n, n, rrect(4.0 * u, 4.0 * u, 4.0 * u, 4.0 * u, 0.6 * u))
+        ring = mask(n, n, stroke(arc_pts(6 * u, 6 * u, 3.9 * u, -90, 170, 60), 0.7 * u))
+        track = mask(n, n, stroke(arc_pts(6 * u, 6 * u, 3.9 * u, 0, 360, 80), 0.4 * u)) * 0.35
+        return np.maximum.reduce([cov, ring, track])
+    if addon == "lyrics-backdrop":
+        cov = mask(n, n, rrect(2.2 * u, 2.2 * u, 7.6 * u, 7.6 * u, 1.0 * u)) * 0.35
+        lines = np.maximum.reduce([mask(n, n, rrect(3.2 * u, 4.0 * u, 4.4 * u, 0.7 * u, 0.35 * u)),
+                                   mask(n, n, rrect(3.2 * u, 5.5 * u, 5.6 * u, 1.1 * u, 0.55 * u)),
+                                   mask(n, n, rrect(3.2 * u, 7.4 * u, 3.6 * u, 0.7 * u, 0.35 * u))])
+        return np.maximum(cov, lines)
+    if addon == "queue-tools":
+        rows = np.maximum.reduce([mask(n, n, rrect((3.4 + (0.6 if k == 1 else 0)) * u, (2.6 + k * 2.4) * u, 6.0 * u, 1.5 * u, 0.5 * u)) * (1.0 if k == 1 else 0.6) for k in range(3)])
+        arr = mask(n, n, polygon([(2.2 * u, 3.2 * u), (1.3 * u, 4.6 * u), (3.1 * u, 4.6 * u)]))
+        arr2 = mask(n, n, polygon([(2.2 * u, 8.8 * u), (1.3 * u, 7.4 * u), (3.1 * u, 7.4 * u)]))
+        return np.maximum.reduce([rows, arr, arr2])
+    if addon == "up-next":
+        card = mask(n, n, rrect(1.8 * u, 3.0 * u, 8.4 * u, 6.0 * u, 1.1 * u)) * 0.35
+        tiles = np.maximum.reduce([mask(n, n, rrect((2.6 + k * 2.3) * u, 4.8 * u, 1.9 * u, 1.9 * u, 0.3 * u)) for k in range(3)])
+        return np.maximum(card, tiles)
+    return None
+
+
 def render_cover(addon):
     img = COVERS[addon]()
     return to_image(finish(img, 100 + IDS.index(addon)))
@@ -635,6 +874,8 @@ def render_icon(addon):
 
 def glyph_mask(addon, n):
     u = n / 12
+    if addon in NEW_066:
+        return glyph_066(addon, n)
     if addon == "vinyl":
         return np.clip(mask(n, n, ellipse(6 * u, 6 * u, 3.6 * u)) - mask(n, n, ellipse(6 * u, 6 * u, 1.1 * u)) * 0.55
                        - mask(n, n, ellipse(6 * u, 6 * u, 0.3 * u)), 0, 1)
@@ -688,6 +929,18 @@ def c_name(addon, kind):
     return "MRGArt_%s_%s" % (kind, addon.replace("-", "_"))
 
 
+def make_sheet(path, ids, covers, icons):
+    cw, chh, cols = 540, 304, 4 if len(ids) > 8 else 2
+    rows = (len(ids) + cols - 1) // cols
+    sheet = Image.new("RGB", (cw * cols + 20 * (cols + 1), (chh + 30) * rows + 30 + 150), (5, 5, 8))
+    for i, addon in enumerate(ids):
+        sheet.paste(covers[addon].resize((cw, chh), Image.LANCZOS), (20 + (i % cols) * (cw + 20), 20 + (i // cols) * (chh + 30)))
+    for i, addon in enumerate(ids):
+        ic = icons[addon].resize((88, 88), Image.LANCZOS)
+        sheet.paste(ic, (20 + i * 110, (chh + 30) * rows + 40), ic)
+    sheet.save(path)
+
+
 def main():
     preview = sys.argv[1] if len(sys.argv) > 1 else None
     only = sys.argv[2].split(",") if len(sys.argv) > 2 else None
@@ -708,14 +961,9 @@ def main():
     if only:
         return
     if preview:
-        cw, chh = 540, 304
-        sheet = Image.new("RGB", (cw * 2 + 60, (chh + 30) * 4 + 30 + 150), (5, 5, 8))
-        for i, addon in enumerate(IDS):
-            sheet.paste(covers[addon].resize((cw, chh), Image.LANCZOS), (20 + (i % 2) * (cw + 20), 20 + (i // 2) * (chh + 30)))
-        for i, addon in enumerate(IDS):
-            ic = icons[addon].resize((88, 88), Image.LANCZOS)
-            sheet.paste(ic, (20 + i * 110, (chh + 30) * 4 + 40), ic)
-        sheet.save(os.path.join(preview, "sheet.png"))
+        # sheet.png: this release's new art; sheet-all.png: every cover and icon
+        make_sheet(os.path.join(preview, "sheet.png"), NEW_066, covers, icons)
+        make_sheet(os.path.join(preview, "sheet-all.png"), IDS, covers, icons)
     with open(OUT_M, "w") as f:
         f.write("// Generated by scripts/mirage-art.py: the add-on covers (JPEG) and icons (PNG). Do not edit by hand.\n")
         f.write("#include <stddef.h>\n\n")
