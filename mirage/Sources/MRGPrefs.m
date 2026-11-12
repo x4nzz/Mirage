@@ -30,7 +30,7 @@ MRGTopFadeMode MRGTopFade(void) { NSInteger m = [V(@"mirage.bg.topFade", @1) int
 void MRGSetTopFade(MRGTopFadeMode m) { [D() setInteger:m forKey:@"mirage.bg.topFade"]; MRGPostChange(); }
 
 BOOL MRGWantsScreen(MRGScreen s) {
-    if (!MRGBackgroundEnabled() || MRGCurrentKind() == MRGMediaNone) return NO;
+    if (!MRGBackgroundEnabled() || MRGKindForScreen(s) == MRGMediaNone) return NO;
     MRGScreen on = MRGScreens();
     if (s == MRGScreenEverywhere) return (on & MRGScreenEverywhere) != 0;
     if (s == MRGScreenDrawer) return (on & MRGScreenDrawer) != 0;
@@ -59,19 +59,133 @@ NSURL *MRGCurrentMediaURL(void) {
     return [MRGMediaDirectory() URLByAppendingPathComponent:[D() stringForKey:@"mirage.bg.file"]];
 }
 
+static NSString *assignKey(MRGScreen screen) { return [NSString stringWithFormat:@"mirage.bg.assign.%lu", (unsigned long)screen]; }
+
+static NSMutableArray<NSDictionary *> *libraryItems(void) {
+    static BOOL ready;
+    NSMutableArray *items = [NSMutableArray array];
+    for (id item in [D() arrayForKey:@"mirage.bg.library"]) if ([item isKindOfClass:NSDictionary.class]) [items addObject:[item mutableCopy]];
+    if (!ready && ![D() objectForKey:@"mirage.bg.library"]) {
+        NSString *file = [D() stringForKey:@"mirage.bg.file"];
+        NSURL *url = file.length ? [MRGMediaDirectory() URLByAppendingPathComponent:file] : nil;
+        if (url && [NSFileManager.defaultManager fileExistsAtPath:url.path]) {
+            NSString *itemID = NSUUID.UUID.UUIDString;
+            [items addObject:[@{@"id": itemID, @"name": file.stringByDeletingPathExtension, @"file": file, @"kind": @([D() integerForKey:@"mirage.bg.kind"])} mutableCopy]];
+            [D() setObject:itemID forKey:@"mirage.bg.active"];
+        }
+        [D() setObject:items forKey:@"mirage.bg.library"];
+    }
+    ready = YES;
+    return items;
+}
+
+static void saveLibrary(NSArray *items) { [D() setObject:items forKey:@"mirage.bg.library"]; }
+
+static NSDictionary *itemForID(NSString *itemID) {
+    if (!itemID.length) return nil;
+    for (NSDictionary *item in libraryItems()) if ([item[@"id"] isEqualToString:itemID]) return item;
+    return nil;
+}
+
+static void pointActiveAt(NSDictionary *item) {
+    if (!item) {
+        [D() removeObjectForKey:@"mirage.bg.file"];
+        [D() setInteger:MRGMediaNone forKey:@"mirage.bg.kind"];
+        [D() removeObjectForKey:@"mirage.bg.active"];
+        return;
+    }
+    [D() setObject:item[@"id"] forKey:@"mirage.bg.active"];
+    [D() setObject:item[@"file"] forKey:@"mirage.bg.file"];
+    [D() setInteger:[item[@"kind"] integerValue] forKey:@"mirage.bg.kind"];
+}
+
+NSArray<NSDictionary *> *MRGBackgroundLibrary(void) { return libraryItems(); }
+NSString *MRGBackgroundActiveID(void) { libraryItems(); return [D() stringForKey:@"mirage.bg.active"]; }
+
+void MRGBackgroundSetActive(NSString *itemID) {
+    NSDictionary *item = itemForID(itemID);
+    if (!item) return;
+    pointActiveAt(item);
+    MRGPostChange();
+}
+
+void MRGBackgroundDelete(NSString *itemID) {
+    NSMutableArray *items = libraryItems();
+    NSDictionary *found = nil;
+    for (NSDictionary *item in items) if ([item[@"id"] isEqualToString:itemID]) found = item;
+    if (!found) return;
+    [items removeObject:found];
+    saveLibrary(items);
+    if (found[@"file"]) [NSFileManager.defaultManager removeItemAtURL:[MRGMediaDirectory() URLByAppendingPathComponent:found[@"file"]] error:nil];
+    for (MRGScreen screen = MRGScreenHome; screen <= MRGScreenDrawer; screen <<= 1)
+        if ([[D() stringForKey:assignKey(screen)] isEqualToString:itemID]) [D() removeObjectForKey:assignKey(screen)];
+    if ([[D() stringForKey:@"mirage.bg.active"] isEqualToString:itemID]) pointActiveAt(items.firstObject);
+    MRGPostChange();
+}
+
+void MRGBackgroundRename(NSString *itemID, NSString *name) {
+    if (!name.length) return;
+    NSMutableArray *items = libraryItems();
+    for (NSMutableDictionary *item in items) if ([item[@"id"] isEqualToString:itemID]) item[@"name"] = name;
+    saveLibrary(items);
+    MRGPostChange();
+}
+
+NSString *MRGBackgroundAssignment(MRGScreen screen) { return [D() stringForKey:assignKey(screen)]; }
+
+void MRGBackgroundSetAssignment(MRGScreen screen, NSString *itemID) {
+    if (itemID.length && itemForID(itemID)) [D() setObject:itemID forKey:assignKey(screen)];
+    else [D() removeObjectForKey:assignKey(screen)];
+    MRGPostChange();
+}
+
+static NSDictionary *itemForScreen(MRGScreen screen) {
+    NSDictionary *assigned = itemForID(MRGBackgroundAssignment(screen));
+    if (assigned) {
+        NSURL *url = [MRGMediaDirectory() URLByAppendingPathComponent:assigned[@"file"] ?: @""];
+        if ([NSFileManager.defaultManager fileExistsAtPath:url.path]) return assigned;
+    }
+    return itemForID(MRGBackgroundActiveID());
+}
+
+NSURL *MRGMediaURLForScreen(MRGScreen screen) {
+    if (screen == 0) return MRGCurrentMediaURL();
+    NSDictionary *item = itemForScreen(screen);
+    if (!item[@"file"]) return nil;
+    NSURL *url = [MRGMediaDirectory() URLByAppendingPathComponent:item[@"file"]];
+    return [NSFileManager.defaultManager fileExistsAtPath:url.path] ? url : nil;
+}
+
+MRGMediaKind MRGKindForScreen(MRGScreen screen) {
+    if (screen == 0) return MRGCurrentKind();
+    NSDictionary *item = itemForScreen(screen);
+    if (!item) return MRGMediaNone;
+    NSURL *url = [MRGMediaDirectory() URLByAppendingPathComponent:item[@"file"] ?: @""];
+    if (![NSFileManager.defaultManager fileExistsAtPath:url.path]) return MRGMediaNone;
+    return [item[@"kind"] integerValue];
+}
+
 void MRGSetCurrentMedia(NSURL *file, MRGMediaKind kind) {
-    NSString *old = [D() stringForKey:@"mirage.bg.file"];
-    [D() setObject:file.lastPathComponent forKey:@"mirage.bg.file"];
-    [D() setInteger:kind forKey:@"mirage.bg.kind"];
-    if (old.length && ![old isEqualToString:file.lastPathComponent])
-        [NSFileManager.defaultManager removeItemAtURL:[MRGMediaDirectory() URLByAppendingPathComponent:old] error:nil];
+    if (!file.lastPathComponent.length) return;
+    NSMutableArray *items = libraryItems();
+    NSDictionary *existing = nil;
+    for (NSDictionary *item in items) if ([item[@"file"] isEqualToString:file.lastPathComponent]) existing = item;
+    NSString *itemID = existing[@"id"];
+    if (!itemID) {
+        itemID = NSUUID.UUID.UUIDString;
+        [items addObject:@{@"id": itemID, @"name": file.lastPathComponent.stringByDeletingPathExtension, @"file": file.lastPathComponent, @"kind": @(kind)}];
+        saveLibrary(items);
+    }
+    pointActiveAt(itemForID(itemID));
     MRGPostChange();
 }
 
 void MRGRemoveCurrentMedia(void) {
-    NSString *old = [D() stringForKey:@"mirage.bg.file"];
-    if (old.length) [NSFileManager.defaultManager removeItemAtURL:[MRGMediaDirectory() URLByAppendingPathComponent:old] error:nil];
-    [D() removeObjectForKey:@"mirage.bg.file"];
-    [D() setInteger:MRGMediaNone forKey:@"mirage.bg.kind"];
-    MRGPostChange();
+    NSString *active = MRGBackgroundActiveID();
+    if (active) MRGBackgroundDelete(active);
+    else {
+        [D() removeObjectForKey:@"mirage.bg.file"];
+        [D() setInteger:MRGMediaNone forKey:@"mirage.bg.kind"];
+        MRGPostChange();
+    }
 }

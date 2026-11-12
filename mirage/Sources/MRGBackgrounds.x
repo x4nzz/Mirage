@@ -306,6 +306,7 @@ static void attachWith(UIView *host, MRGScreen screen, BOOL onTop, BOOL forced, 
         objc_setAssociatedObject(host, &kBackgroundKey, bg, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         if (!onTop) detachDescendants(host);
     }
+    if (bg.screen != screen) bg.screen = screen;
     if (bg.hidden) bg.hidden = NO;
     if (bg.extraDim != extraDim) bg.extraDim = extraDim;
     if (screen == MRGScreenNowPlaying && !bg.followView) {

@@ -21,10 +21,12 @@
 // and is registered as conforming at launch, or presented when the protocol is missing.
 static BOOL sg_pageConforms;
 
-typedef NS_ENUM(NSInteger, MRGSection) { MRGSecPreview, MRGSecMedia, MRGSecLook, MRGSecScreens, MRGSecShop, MRGSecDJ, MRGSecAbout, MRGSecCount };
+typedef NS_ENUM(NSInteger, MRGSection) { MRGSecBackgrounds, MRGSecShop, MRGSecDJ, MRGSecAbout, MRGSecCount };
+typedef NS_ENUM(NSInteger, MRGBgSection) { MRGBgPreview, MRGBgMedia, MRGBgLibrary, MRGBgLook, MRGBgScreens, MRGBgAssign, MRGBgCount };
 
 @interface MRGSettingsController : UITableViewController <PHPickerViewControllerDelegate, UIDocumentPickerDelegate>
 @property (nonatomic) BOOL djOnly;   // the AI DJ page: every DJ setting, in its own groups (like Vitrine's tabs)
+@property (nonatomic) BOOL bgOnly;   // the Backgrounds page, the same way
 @end
 
 // The AI DJ page's groups, as rows of the old DJ section (djCell: row numbers; 12 is Talk like me).
@@ -39,8 +41,8 @@ static NSArray<NSString *> *djGroupTitles(void) { return @[@"AI provider", @"Voi
 
 - (instancetype)init { return [super initWithStyle:UITableViewStyleInsetGrouped]; }
 
-- (NSString *)spt_pageIdentifier { return self.djOnly ? @"mirage-dj" : @"mirage"; }
-- (NSURL *)spt_pageURI { return [NSURL URLWithString:self.djOnly ? @"spotify:internal:mirage-dj" : @"spotify:internal:mirage"]; }
+- (NSString *)spt_pageIdentifier { return self.djOnly ? @"mirage-dj" : self.bgOnly ? @"mirage-backgrounds" : @"mirage"; }
+- (NSURL *)spt_pageURI { return [NSURL URLWithString:self.djOnly ? @"spotify:internal:mirage-dj" : self.bgOnly ? @"spotify:internal:mirage-backgrounds" : @"spotify:internal:mirage"]; }
 
 // The DJ row for an index path of the AI DJ page, or -1.
 - (NSInteger)djRowAt:(NSIndexPath *)ip {
@@ -51,7 +53,7 @@ static NSArray<NSString *> *djGroupTitles(void) { return @[@"AI provider", @"Voi
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.title = self.djOnly ? @"AI DJ" : @"Mirage";
+    self.title = self.djOnly ? @"AI DJ" : self.bgOnly ? @"Backgrounds" : @"Mirage";
     self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
     self.tableView.backgroundColor = UIColor.blackColor;
     // The page draws its own background, laid out for the whole window (not the table's frame, which
@@ -86,7 +88,11 @@ static const CGFloat kBottomChrome = 150;
 
 #pragma mark - table
 
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)t { return self.djOnly ? djGroups().count : MRGSecCount; }
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)t {
+    if (self.djOnly) return djGroups().count;
+    if (self.bgOnly) return MRGBgCount;
+    return MRGSecCount;
+}
 
 - (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)s {
     return MRGSafeCount(^NSInteger { return [self mrg_rowsIn:t section:s]; });
@@ -94,13 +100,21 @@ static const CGFloat kBottomChrome = 150;
 
 - (NSInteger)mrg_rowsIn:(UITableView *)t section:(NSInteger)s {
     if (self.djOnly) return s < (NSInteger)djGroups().count ? [djGroups()[s] count] : 0;
+    if (self.bgOnly) {
+        switch (s) {
+            case MRGBgPreview: return 2;
+            case MRGBgMedia: return 3;
+            case MRGBgLibrary: return MAX((NSInteger)MRGBackgroundLibrary().count, 1);
+            case MRGBgLook: return 6;
+            case MRGBgScreens: return 5;
+            case MRGBgAssign: return 4;
+        }
+        return 0;
+    }
     switch (s) {
-        case MRGSecPreview: return 2;              // enabled, preview
-        case MRGSecMedia: return 3;                // photos, files, remove
-        case MRGSecLook: return 6;                 // blur, dim, scale, top fade, clear pages, profile glow
-        case MRGSecScreens: return 5;
+        case MRGSecBackgrounds: return 1;
         case MRGSecShop: return 1;
-        case MRGSecDJ: return 1;                   // AI DJ → its own page
+        case MRGSecDJ: return 1;
         case MRGSecAbout: return 2;
     }
     return 0;
@@ -108,7 +122,8 @@ static const CGFloat kBottomChrome = 150;
 
 - (NSString *)tableView:(UITableView *)t titleForHeaderInSection:(NSInteger)s {
     if (self.djOnly) return s < (NSInteger)djGroupTitles().count ? djGroupTitles()[s] : nil;
-    return @[@"Backgrounds", @"Media", @"Look", @"Show on", @"Add-on Shop", @"AI DJ", @"About"][s];
+    if (self.bgOnly) return @[@"Backgrounds", @"Media", @"Saved", @"Look", @"Show on", @"Per page"][s];
+    return @[@"Backgrounds", @"Add-on Shop", @"AI DJ", @"About"][s];
 }
 
 - (NSString *)tableView:(UITableView *)t titleForFooterInSection:(NSInteger)s {
@@ -125,10 +140,18 @@ static const CGFloat kBottomChrome = 150;
         }
         return nil;
     }
+    if (self.bgOnly) {
+        switch (s) {
+            case MRGBgMedia: return @"Images (PNG, JPG, HEIC), GIFs (converted to a looping MP4 when you pick them) and videos (MP4, MOV). Each one you pick is kept. Videos play muted, never touch Spotify's audio, and pause when Spotify is in the background or Low Power Mode is on.";
+            case MRGBgLibrary: return @"Tap one to use it. Swipe to rename or delete. The one marked On is used wherever a page doesn't have its own.";
+            case MRGBgLook: return @"Top fade is the dark shade Spotify lays behind the status bar and the header: Soft keeps a third of it, Off removes it. Clear page backgrounds makes Spotify's own page fill transparent so the background shows through; cards and Vitrine's glass stay as they are. Profile picture glow replaces the profile page's color gradient with a soft glow of that color around your picture.";
+            case MRGBgScreens: return @"Everywhere puts one background behind every page, Home and Library included. The side drawer has its own switch, a little dimmer so its text stays readable.";
+            case MRGBgAssign: return @"Give Home, Now Playing, Library or Everywhere its own saved background. Active uses whichever one is marked On.";
+        }
+        return nil;
+    }
     switch (s) {
-        case MRGSecMedia: return @"Images (PNG, JPG, HEIC), GIFs (converted to a looping MP4 when you pick them) and videos (MP4, MOV). Videos play muted, never touch Spotify's audio, and pause when Spotify is in the background.";
-        case MRGSecLook: return @"Top fade is the dark shade Spotify lays behind the status bar and the header: Soft keeps a third of it, Off removes it. Clear page backgrounds makes Spotify's own page fill transparent so the background shows through; cards and Vitrine's glass stay as they are. Profile picture glow replaces the profile page's color gradient with a soft glow of that color around your picture.";
-        case MRGSecScreens: return @"Everywhere puts the background behind every page, Home and Library included. The side drawer has its own switch, a little dimmer so its text stays readable.";
+        case MRGSecBackgrounds: return @"Pictures, video and where they show live on the Backgrounds page. What you already set is kept.";
         case MRGSecDJ:
             return @"Voice, personality, provider, chat and the DJ's other settings are on the AI DJ page. Bring your own key: OpenAI, Gemini (Google AI Studio keys, AQ.… or AIza…), Anthropic, OpenRouter, Groq, xAI, Perplexity, Cerebras, Fireworks, Together, DeepSeek or Mistral. The key stays in this phone's keychain. Privacy: only track and artist names (what's playing, what you played, the queue around it), what you type, and answers from your on-phone listening history that a chat question needs are sent to your provider. Voice: iPhone voices, your provider's voices, or ElevenLabs with its own key. On Spotify Free, Spotify may shuffle the set and its skip limit still applies.";
         case MRGSecAbout: return @"Mirage is free software under the GPL-3.0, built on Vitrine (github.com/meownyaaa/vitrine), itself a fork of Chroma by skopevoj (spoti.pw, up to v0.21.1).";
@@ -138,8 +161,8 @@ static const CGFloat kBottomChrome = 150;
 
 - (CGFloat)tableView:(UITableView *)t heightForRowAtIndexPath:(NSIndexPath *)ip {
     if (self.djOnly) return 48;
-    if (ip.section == MRGSecPreview && ip.row == 1) return MRGCurrentKind() == MRGMediaNone ? 52 : 200;
-    if (ip.section == MRGSecLook && ip.row < 2) return 64;
+    if (self.bgOnly && ip.section == MRGBgPreview && ip.row == 1) return MRGCurrentKind() == MRGMediaNone ? 52 : 200;
+    if (self.bgOnly && ip.section == MRGBgLook && ip.row < 2) return 64;
     return 48;
 }
 
@@ -392,60 +415,109 @@ static NSString *ip3(NSInteger row) { return row == 3 ? @"Voice" : row == 4 ? @"
     return MRGSafeCell(ip, ^UITableViewCell *{ return [self mrg_cellIn:t at:ip]; });
 }
 
+- (UITableViewCell *)libraryCell:(NSInteger)row {
+    NSArray *items = MRGBackgroundLibrary();
+    UITableViewCell *c = baseCell();
+    if (!items.count) {
+        c.textLabel.text = @"No saved backgrounds yet";
+        c.textLabel.textColor = UIColor.grayColor;
+        return c;
+    }
+    NSDictionary *item = items[row];
+    c.textLabel.text = item[@"name"] ?: item[@"file"];
+    BOOL on = [item[@"id"] isEqualToString:MRGBackgroundActiveID()];
+    c.detailTextLabel.text = on ? @"On" : nil;
+    c.detailTextLabel.textColor = UIColor.grayColor;
+    c.accessoryType = on ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone;
+    c.selectionStyle = UITableViewCellSelectionStyleDefault;
+    return c;
+}
+
+- (UITableViewCell *)assignCell:(NSInteger)row {
+    NSArray *titles = @[@"Home", @"Now Playing", @"Library", @"Everywhere"];
+    NSArray *bits = @[@(MRGScreenHome), @(MRGScreenNowPlaying), @(MRGScreenLibrary), @(MRGScreenEverywhere)];
+    UITableViewCell *c = [self actionCell:titles[row] symbol:nil destructive:NO enabled:YES];
+    NSString *itemID = MRGBackgroundAssignment([bits[row] unsignedIntegerValue]);
+    NSString *name = nil;
+    for (NSDictionary *item in MRGBackgroundLibrary()) if ([item[@"id"] isEqualToString:itemID]) name = item[@"name"];
+    c.detailTextLabel.text = name ?: @"Active";
+    c.detailTextLabel.textColor = UIColor.grayColor;
+    c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+    return c;
+}
+
 - (UITableViewCell *)mrg_cellIn:(UITableView *)t at:(NSIndexPath *)ip {
     if (self.djOnly) { NSInteger row = [self djRowAt:ip]; return row >= 0 ? [self djCell:row] : baseCell(); }
+    if (self.bgOnly) {
     MRGScreen screens = MRGScreens();
     BOOL hasMedia = MRGCurrentKind() != MRGMediaNone;
-    switch (ip.section) {
-        case MRGSecPreview:
-            if (ip.row == 0) return [self switchCell:@"Custom background" on:MRGBackgroundEnabled() tag:1 symbol:@"sparkles"];
-            if (!hasMedia) {
-                UITableViewCell *c = baseCell();
-                c.textLabel.text = @"No background picked yet";
-                c.textLabel.textColor = UIColor.grayColor;
-                return c;
-            } else {
-                UITableViewCell *c = baseCell();
-                MRGBackgroundView *preview = [[MRGBackgroundView alloc] initWithFrame:c.contentView.bounds];
-                preview.fitsBounds = YES;
-                preview.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-                [c.contentView addSubview:preview];
-                return c;
+        switch (ip.section) {
+            case MRGBgPreview:
+                if (ip.row == 0) return [self switchCell:@"Custom background" on:MRGBackgroundEnabled() tag:1 symbol:@"sparkles"];
+                if (!hasMedia) {
+                    UITableViewCell *c = baseCell();
+                    c.textLabel.text = @"No background picked yet";
+                    c.textLabel.textColor = UIColor.grayColor;
+                    return c;
+                } else {
+                    UITableViewCell *c = baseCell();
+                    MRGBackgroundView *preview = [[MRGBackgroundView alloc] initWithFrame:c.contentView.bounds];
+                    preview.fitsBounds = YES;
+                    preview.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+                    [c.contentView addSubview:preview];
+                    return c;
+                }
+            case MRGBgMedia:
+                if (ip.row == 0) return [self actionCell:@"Choose from Photos" symbol:@"photo.on.rectangle" destructive:NO enabled:YES];
+                if (ip.row == 1) return [self actionCell:@"Choose from Files" symbol:@"folder" destructive:NO enabled:YES];
+                return [self actionCell:@"Remove background" symbol:@"trash" destructive:YES enabled:hasMedia];
+            case MRGBgLibrary: return [self libraryCell:ip.row];
+            case MRGBgLook:
+                if (ip.row == 0) return [self sliderCell:@"Blur" value:MRGBlur() max:1 tag:10];
+                if (ip.row == 1) return [self sliderCell:@"Dim" value:MRGDim() max:0.9 tag:11];
+                if (ip.row == 2) {
+                    UITableViewCell *c = baseCell();
+                    c.textLabel.text = @"Scale";
+                    UISegmentedControl *seg = [[UISegmentedControl alloc] initWithItems:@[@"Fill", @"Fit", @"Stretch"]];
+                    seg.selectedSegmentIndex = MRGScale();
+                    [seg addTarget:self action:@selector(scaled:) forControlEvents:UIControlEventValueChanged];
+                    c.accessoryView = seg;
+                    [seg sizeToFit];
+                    return c;
+                }
+                if (ip.row == 3) {
+                    UITableViewCell *c = baseCell();
+                    c.textLabel.text = @"Top fade";
+                    UISegmentedControl *seg = [[UISegmentedControl alloc] initWithItems:@[@"Off", @"Soft", @"Full"]];
+                    seg.selectedSegmentIndex = MRGTopFade();
+                    [seg addTarget:self action:@selector(faded:) forControlEvents:UIControlEventValueChanged];
+                    c.accessoryView = seg;
+                    [seg sizeToFit];
+                    return c;
+                }
+                if (ip.row == 4) return [self switchCell:@"Clear page backgrounds" on:MRGClearPages() tag:2 symbol:nil];
+                return [self switchCell:@"Profile picture glow" on:MRGProfileGlow() tag:3 symbol:nil];
+            case MRGBgScreens: {
+                NSArray *titles = @[@"Home", @"Now Playing", @"Library", @"Everywhere", @"Show in side drawer"];
+                NSArray *symbols = @[@"house.fill", @"play.circle.fill", @"books.vertical.fill", @"square.stack.3d.up.fill", @"sidebar.left"];
+                return [self switchCell:titles[ip.row] on:(screens & (1 << ip.row)) != 0 tag:100 + ip.row symbol:symbols[ip.row]];
             }
-        case MRGSecMedia:
-            if (ip.row == 0) return [self actionCell:@"Choose from Photos" symbol:@"photo.on.rectangle" destructive:NO enabled:YES];
-            if (ip.row == 1) return [self actionCell:@"Choose from Files" symbol:@"folder" destructive:NO enabled:YES];
-            return [self actionCell:@"Remove background" symbol:@"trash" destructive:YES enabled:hasMedia];
-        case MRGSecLook:
-            if (ip.row == 0) return [self sliderCell:@"Blur" value:MRGBlur() max:1 tag:10];
-            if (ip.row == 1) return [self sliderCell:@"Dim" value:MRGDim() max:0.9 tag:11];
-            if (ip.row == 2) {
-                UITableViewCell *c = baseCell();
-                c.textLabel.text = @"Scale";
-                UISegmentedControl *seg = [[UISegmentedControl alloc] initWithItems:@[@"Fill", @"Fit", @"Stretch"]];
-                seg.selectedSegmentIndex = MRGScale();
-                [seg addTarget:self action:@selector(scaled:) forControlEvents:UIControlEventValueChanged];
-                c.accessoryView = seg;
-                [seg sizeToFit];
-                return c;
-            }
-            if (ip.row == 3) {
-                UITableViewCell *c = baseCell();
-                c.textLabel.text = @"Top fade";
-                UISegmentedControl *seg = [[UISegmentedControl alloc] initWithItems:@[@"Off", @"Soft", @"Full"]];
-                seg.selectedSegmentIndex = MRGTopFade();
-                [seg addTarget:self action:@selector(faded:) forControlEvents:UIControlEventValueChanged];
-                c.accessoryView = seg;
-                [seg sizeToFit];
-                return c;
-            }
-            if (ip.row == 4) return [self switchCell:@"Clear page backgrounds" on:MRGClearPages() tag:2 symbol:nil];
-            return [self switchCell:@"Profile picture glow" on:MRGProfileGlow() tag:3 symbol:nil];
-        case MRGSecScreens: {
-            NSArray *titles = @[@"Home", @"Now Playing", @"Library", @"Everywhere", @"Show in side drawer"];
-            NSArray *symbols = @[@"house.fill", @"play.circle.fill", @"books.vertical.fill", @"square.stack.3d.up.fill", @"sidebar.left"];
-            return [self switchCell:titles[ip.row] on:(screens & (1 << ip.row)) != 0 tag:100 + ip.row symbol:symbols[ip.row]];
+            case MRGBgAssign: return [self assignCell:ip.row];
         }
+        return baseCell();
+    }
+    switch (ip.section) {
+        case MRGSecBackgrounds: {
+            UITableViewCell *c = [self actionCell:@"Backgrounds" symbol:@"photo.on.rectangle.angled" destructive:NO enabled:YES];
+            NSUInteger n = MRGBackgroundLibrary().count;
+            c.detailTextLabel.text = n ? [NSString stringWithFormat:@"%lu saved", (unsigned long)n] : @"Set up";
+            c.detailTextLabel.textColor = UIColor.grayColor;
+            c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+            return c;
+        }
+        default: break;
+    }
+    switch (ip.section) {
         case MRGSecShop: {
             UITableViewCell *c = [self actionCell:@"Add-on Shop" symbol:@"bag.fill" destructive:NO enabled:YES];
             NSUInteger n = MRGAddonsInstalledCount();
@@ -491,20 +563,76 @@ static NSString *ip3(NSInteger row) { return row == 3 ? @"Voice" : row == 4 ? @"
         else if (row == 13) [self editBackupKey];
         return;
     }
+    if (self.bgOnly) {
+        if (ip.section == MRGBgMedia) {
+            if (ip.row == 0) [self pickFromPhotos];
+            else if (ip.row == 1) [self pickFromFiles];
+            else [self confirmRemoveBackground];
+        } else if (ip.section == MRGBgLibrary && MRGBackgroundLibrary().count) {
+            NSDictionary *item = MRGBackgroundLibrary()[ip.row];
+            MRGBackgroundSetActive(item[@"id"]);
+            [self.tableView reloadData];
+        } else if (ip.section == MRGBgAssign) {
+            [self pickAssignment:ip.row];
+        }
+        return;
+    }
+    if (ip.section == MRGSecBackgrounds) { MRGShowBackgroundSettings(self); return; }
     if (ip.section == MRGSecDJ) { MRGShowDJSettings(self); return; }
     if (ip.section == MRGSecShop) { MRGPushPage(self, MRGAddonShopPage()); return; }
-    if (ip.section != MRGSecMedia) return;
-    if (ip.row == 0) [self pickFromPhotos];
-    else if (ip.row == 1) [self pickFromFiles];
-    else {
-        UIAlertController *a = [UIAlertController alertControllerWithTitle:@"Remove background?" message:nil preferredStyle:UIAlertControllerStyleAlert];
-        [a addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
-        [a addAction:[UIAlertAction actionWithTitle:@"Remove" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *x) {
-            MRGRemoveCurrentMedia();
+}
+
+- (void)confirmRemoveBackground {
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:@"Remove background?" message:@"This deletes the one marked On. The others stay." preferredStyle:UIAlertControllerStyleAlert];
+    [a addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [a addAction:[UIAlertAction actionWithTitle:@"Remove" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *x) {
+        MRGRemoveCurrentMedia();
+        [self.tableView reloadData];
+    }]];
+    [self presentViewController:a animated:YES completion:nil];
+}
+
+- (void)pickAssignment:(NSInteger)row {
+    NSArray *bits = @[@(MRGScreenHome), @(MRGScreenNowPlaying), @(MRGScreenLibrary), @(MRGScreenEverywhere)];
+    MRGScreen screen = [bits[row] unsignedIntegerValue];
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:@"Background" message:nil preferredStyle:UIAlertControllerStyleActionSheet];
+    [a addAction:[UIAlertAction actionWithTitle:@"Active" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) {
+        MRGBackgroundSetAssignment(screen, nil);
+        [self.tableView reloadData];
+    }]];
+    for (NSDictionary *item in MRGBackgroundLibrary()) {
+        [a addAction:[UIAlertAction actionWithTitle:item[@"name"] ?: item[@"file"] style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) {
+            MRGBackgroundSetAssignment(screen, item[@"id"]);
             [self.tableView reloadData];
         }]];
-        [self presentViewController:a animated:YES completion:nil];
     }
+    [a addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    UIView *source = [self.tableView cellForRowAtIndexPath:[NSIndexPath indexPathForRow:row inSection:MRGBgAssign]];
+    a.popoverPresentationController.sourceView = source;
+    a.popoverPresentationController.sourceRect = source.bounds;
+    [self presentViewController:a animated:YES completion:nil];
+}
+
+- (UISwipeActionsConfiguration *)tableView:(UITableView *)t trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)ip {
+    if (!self.bgOnly || ip.section != MRGBgLibrary || !MRGBackgroundLibrary().count) return nil;
+    NSDictionary *item = MRGBackgroundLibrary()[ip.row];
+    UIContextualAction *rename = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleNormal title:@"Rename" handler:^(UIContextualAction *action, UIView *view, void (^done)(BOOL)) {
+        UIAlertController *a = [UIAlertController alertControllerWithTitle:@"Rename" message:nil preferredStyle:UIAlertControllerStyleAlert];
+        [a addTextFieldWithConfigurationHandler:^(UITextField *f) { f.text = item[@"name"]; }];
+        [a addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction *x) { done(NO); }]];
+        [a addAction:[UIAlertAction actionWithTitle:@"Save" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) {
+            MRGBackgroundRename(item[@"id"], a.textFields.firstObject.text);
+            [self.tableView reloadData];
+            done(YES);
+        }]];
+        [self presentViewController:a animated:YES completion:nil];
+    }];
+    UIContextualAction *delete = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleDestructive title:@"Delete" handler:^(UIContextualAction *action, UIView *view, void (^done)(BOOL)) {
+        MRGBackgroundDelete(item[@"id"]);
+        [self.tableView reloadData];
+        done(YES);
+    }];
+    return [UISwipeActionsConfiguration configurationWithActions:@[delete, rename]];
 }
 
 #pragma mark - controls
@@ -526,14 +654,14 @@ static NSString *ip3(NSInteger row) { return row == 3 ? @"Voice" : row == 4 ? @"
 - (void)slid:(UISlider *)s {
     if (s.tag == 10) MRGSetBlur(s.value);
     else MRGSetDim(s.value);
-    [self.tableView reloadSections:[NSIndexSet indexSetWithIndex:MRGSecPreview] withRowAnimation:UITableViewRowAnimationNone];
+    if (self.bgOnly) [self.tableView reloadSections:[NSIndexSet indexSetWithIndex:MRGBgPreview] withRowAnimation:UITableViewRowAnimationNone];
 }
 
 - (void)faded:(UISegmentedControl *)seg { MRGSetTopFade(seg.selectedSegmentIndex); }
 
 - (void)scaled:(UISegmentedControl *)seg {
     MRGSetScale(seg.selectedSegmentIndex);
-    [self.tableView reloadSections:[NSIndexSet indexSetWithIndex:MRGSecPreview] withRowAnimation:UITableViewRowAnimationNone];
+    if (self.bgOnly) [self.tableView reloadSections:[NSIndexSet indexSetWithIndex:MRGBgPreview] withRowAnimation:UITableViewRowAnimationNone];
 }
 
 #pragma mark - picking
@@ -622,6 +750,19 @@ void MRGShowSettings(UIViewController *owner) {
 }
 
 // The AI DJ page on its own (from the Mirage settings row, the DJ sheet's and the chat's settings buttons).
+void MRGShowBackgroundSettings(UIViewController *owner) {
+    MRGSettingsController *page = [MRGSettingsController new];
+    page.bgOnly = YES;
+    if (owner.navigationController && sg_pageConforms) {
+        [owner.navigationController pushViewController:page animated:YES];
+        return;
+    }
+    UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:page];
+    nav.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+    nav.modalPresentationStyle = UIModalPresentationFormSheet;
+    [owner presentViewController:nav animated:YES completion:nil];
+}
+
 void MRGShowDJSettings(UIViewController *owner) {
     MRGSettingsController *page = [MRGSettingsController new];
     page.djOnly = YES;

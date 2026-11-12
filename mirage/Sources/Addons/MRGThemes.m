@@ -388,7 +388,7 @@ static void removeTheme(void) {
     };
     if (!self.theme[@"background"]) { finish(NO); return; }
     UIAlertController *a = [UIAlertController alertControllerWithTitle:@"Use this theme's background?"
-        message:@"This replaces the background you have now. The colors are applied either way."
+        message:@"The picture you have now stays in Backgrounds. The colors are applied either way."
         preferredStyle:UIAlertControllerStyleAlert];
     [a addAction:[UIAlertAction actionWithTitle:@"Colors only" style:UIAlertActionStyleCancel handler:^(UIAlertAction *x) { finish(NO); }]];
     [a addAction:[UIAlertAction actionWithTitle:@"Use background" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *x) { finish(YES); }]];

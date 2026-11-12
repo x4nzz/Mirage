@@ -3,6 +3,7 @@
 // AVVideoComposition), under a black dim layer. It never takes touches.
 #import <UIKit/UIKit.h>
 #import <AVFoundation/AVFoundation.h>
+#import "MRGPrefs.h"
 
 @interface MRGVideoEngine : NSObject
 + (instancetype)shared;
@@ -25,6 +26,8 @@
 - (void)pinCanvas;
 // A preview: the picture is laid out for the view's own bounds rather than the window's.
 @property (nonatomic) BOOL fitsBounds;
+// Which screen this view is backing. 0 uses the active background (the settings preview).
+@property (nonatomic) MRGScreen screen;
 // Added to the dim setting (the side drawer's text sits right on the picture).
 @property (nonatomic) CGFloat extraDim;
 // 0.5.2: when set (Now Playing's card), the picture moves with this view instead of staying put on the window, so

@@ -46,11 +46,23 @@ typedef NS_ENUM(NSInteger, MRGTopFadeMode) {
 MRGTopFadeMode MRGTopFade(void);
 void MRGSetTopFade(MRGTopFadeMode m);
 
-// Media in Documents/Mirage/.
+// Media in Documents/Mirage/. The active file is what a screen uses when it has no assignment of its own.
 MRGMediaKind MRGCurrentKind(void);
 NSURL *MRGCurrentMediaURL(void);
 NSURL *MRGMediaDirectory(void);
 void MRGSetCurrentMedia(NSURL *fileInMediaDirectory, MRGMediaKind kind);
 void MRGRemoveCurrentMedia(void);
+
+// Saved backgrounds. Each is {id, name, file, kind}. Existing single-file setups become a one-item library.
+NSArray<NSDictionary *> *MRGBackgroundLibrary(void);
+NSString *MRGBackgroundActiveID(void);
+void MRGBackgroundSetActive(NSString *itemID);
+void MRGBackgroundDelete(NSString *itemID);
+void MRGBackgroundRename(NSString *itemID, NSString *name);
+// nil means "the active background".
+NSString *MRGBackgroundAssignment(MRGScreen screen);
+void MRGBackgroundSetAssignment(MRGScreen screen, NSString *itemID);
+NSURL *MRGMediaURLForScreen(MRGScreen screen);
+MRGMediaKind MRGKindForScreen(MRGScreen screen);
 
 void MRGPostChange(void);

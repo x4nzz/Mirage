@@ -18,7 +18,7 @@ so Ksign signs it with your own certificate.
 
 ## Using backgrounds
 
-Go to Mirage, then **Choose from Photos** or **Choose from Files**:
+Go to Mirage, then **Backgrounds**. Choose from Photos or Files. Each picture or video you pick is kept, and you choose which one is on. Home, Now Playing, Library and Everywhere can each use a different one. Blur, dim, scale, the top fade, clear page backgrounds and the profile glow are on that same page, and a background you already picked is still there.
 
 - **Images**: PNG, JPG and HEIC. They are resized to your screen and saved in Spotify's Documents/Mirage folder.
 - **GIFs**: converted once into a looping MP4, which is much lighter on the battery than a live GIF.

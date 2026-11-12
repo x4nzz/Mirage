@@ -1,5 +1,6 @@
 #import "MRGBackgroundView.h"
 #import "MRGPrefs.h"
+#import "Addons/MRGAddon.h"
 #import <CoreImage/CoreImage.h>
 
 static CGFloat blurRadius(void) { return MRGBlur() * 40.0; }
@@ -42,14 +43,20 @@ static CGFloat blurRadius(void) { return MRGBlur() * 40.0; }
         (id)kCVPixelBufferPixelFormatTypeKey: @(kCVPixelFormatType_32BGRA)}];
     // The looper swaps the queue's item every loop: the output follows the current one.
     [_player addObserver:self forKeyPath:@"currentItem" options:NSKeyValueObservingOptionNew context:NULL];
-    _active = UIApplication.sharedApplication.applicationState != UIApplicationStateBackground;
+    _active = UIApplication.sharedApplication.applicationState == UIApplicationStateActive && !NSProcessInfo.processInfo.isLowPowerModeEnabled;
     NSNotificationCenter *nc = NSNotificationCenter.defaultCenter;
     // queue:nil and a hop to main (Vitrine's AGENTS.md: never block a posting thread on main).
     [nc addObserverForName:UIApplicationDidEnterBackgroundNotification object:nil queue:nil usingBlock:^(NSNotification *n) {
         dispatch_async(dispatch_get_main_queue(), ^{ self->_active = NO; [self update]; });
     }];
-    [nc addObserverForName:UIApplicationWillEnterForegroundNotification object:nil queue:nil usingBlock:^(NSNotification *n) {
-        dispatch_async(dispatch_get_main_queue(), ^{ self->_active = YES; [self update]; });
+    [nc addObserverForName:UIApplicationDidBecomeActiveNotification object:nil queue:nil usingBlock:^(NSNotification *n) {
+        dispatch_async(dispatch_get_main_queue(), ^{ self->_active = !NSProcessInfo.processInfo.isLowPowerModeEnabled; [self update]; });
+    }];
+    [nc addObserverForName:NSProcessInfoPowerStateDidChangeNotification object:nil queue:nil usingBlock:^(NSNotification *n) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self->_active = UIApplication.sharedApplication.applicationState == UIApplicationStateActive && !NSProcessInfo.processInfo.isLowPowerModeEnabled;
+            [self update];
+        });
     }];
     return self;
 }
@@ -124,8 +131,7 @@ static CIContext *posterContext(void) {
     return _poster;
 }
 
-- (void)reload {
-    NSURL *url = MRGCurrentKind() == MRGMediaVideo ? MRGCurrentMediaURL() : nil;
+- (void)reloadURL:(NSURL *)url {
     double blur = blurRadius();
     if ((url == _loadedURL || [url isEqual:_loadedURL]) && blur == _loadedBlur) { [self update]; return; }
     [_looper disableLooping];
@@ -166,6 +172,8 @@ static CIContext *posterContext(void) {
     if (item) _looper = [AVPlayerLooper playerLooperWithPlayer:_player templateItem:item];
     [self update];
 }
+
+- (void)reload { [self reloadURL:MRGCurrentKind() == MRGMediaVideo ? MRGCurrentMediaURL() : nil]; }
 
 - (void)update {
     BOOL play = _active && _loadedURL && _visible.count > 0;
@@ -209,16 +217,20 @@ CGRect MRGWindowRectInView(UIView *view) {
     AVPlayerLayer *_playerLayer;
     UIView *_dim;
     BOOL _posterUp;     // the image view shows the engine's poster until the player layer has a frame
+    BOOL _usesShared;
+    AVQueuePlayer *_ownPlayer;
+    AVPlayerLooper *_ownLooper;
+    NSURL *_ownURL;
 }
 
-static UIImage *sg_still;
-static NSString *sg_stillKey;
+static NSMutableDictionary<NSString *, UIImage *> *sg_stills;
 
-+ (UIImage *)currentStill {
-    NSURL *url = MRGCurrentKind() == MRGMediaImage ? MRGCurrentMediaURL() : nil;
++ (UIImage *)stillForURL:(NSURL *)url {
     if (!url) return nil;
+    if (!sg_stills) sg_stills = [NSMutableDictionary dictionary];
     NSString *key = [NSString stringWithFormat:@"%@|%.2f", url.lastPathComponent, blurRadius()];
-    if ([key isEqualToString:sg_stillKey]) return sg_still;
+    UIImage *cached = sg_stills[key];
+    if (cached) return cached;
     UIImage *image = [UIImage imageWithContentsOfFile:url.path];
     if (image && blurRadius() > 0.5) {
         // Once per change of picture or blur, not per frame.
@@ -229,10 +241,12 @@ static NSString *sg_stillKey;
         CGImageRef cg = [ctx createCGImage:out fromRect:ci.extent];
         if (cg) { image = [UIImage imageWithCGImage:cg scale:image.scale orientation:image.imageOrientation]; CGImageRelease(cg); }
     }
-    sg_still = image;
-    sg_stillKey = key;
+    if (image) sg_stills[key] = image;
+    if (sg_stills.count > 8) [sg_stills removeObjectForKey:sg_stills.allKeys.firstObject];
     return image;
 }
+
++ (UIImage *)currentStill { return [self stillForURL:MRGCurrentKind() == MRGMediaImage ? MRGCurrentMediaURL() : nil]; }
 
 - (instancetype)initWithFrame:(CGRect)frame {
     if (!(self = [super initWithFrame:frame])) return nil;
@@ -264,32 +278,82 @@ static NSString *sg_stillKey;
     [MRGVideoEngine.shared viewDisappeared:self];
 }
 
+- (void)stopOwnVideo {
+    [_ownLooper disableLooping];
+    _ownLooper = nil;
+    [_ownPlayer pause];
+    [_ownPlayer removeAllItems];
+    _ownPlayer = nil;
+    _ownURL = nil;
+}
+
+- (void)setScreen:(MRGScreen)screen {
+    if (screen == _screen) return;
+    _screen = screen;
+    [self refresh];
+}
+
 - (void)refresh {
-    MRGMediaKind kind = MRGCurrentKind();
+    MRGMediaKind kind = MRGKindForScreen(self.screen);
+    NSURL *url = MRGMediaURLForScreen(self.screen);
     MRGScaleMode scale = MRGScale();
     _dim.alpha = MIN(0.95, MRGDim() + _extraDim);
     _imageView.contentMode = scale == MRGScaleFit ? UIViewContentModeScaleAspectFit
                            : scale == MRGScaleStretch ? UIViewContentModeScaleToFill : UIViewContentModeScaleAspectFill;
+    // The shared engine plays the active video. A screen assigned a different video gets its own muted player,
+    // so Home and Now Playing can each move. Same file as the active one keeps the shared engine.
+    BOOL ownVideo = kind == MRGMediaVideo && self.screen != 0 && MRGCurrentMediaURL() && ![url isEqual:MRGCurrentMediaURL()];
     if (kind == MRGMediaImage) {
-        _imageView.image = [MRGBackgroundView currentStill];
+        [self stopOwnVideo];
+        if (_usesShared) { [MRGVideoEngine.shared viewDisappeared:self]; _usesShared = NO; }
+        _imageView.image = [MRGBackgroundView stillForURL:url];
         _imageView.hidden = NO;
+        _posterUp = NO;
         [_playerLayer removeFromSuperlayer];
         _playerLayer = nil;
+        [MRGVideoEngine.shared reload];
+    } else if (ownVideo) {
+        if (_usesShared) { [MRGVideoEngine.shared viewDisappeared:self]; _usesShared = NO; }
+        if (![_ownURL isEqual:url]) {
+            [self stopOwnVideo];
+            _ownURL = url;
+            _ownPlayer = [AVQueuePlayer new];
+            _ownPlayer.muted = YES;
+            _ownPlayer.volume = 0;
+            _ownPlayer.allowsExternalPlayback = NO;
+            _ownPlayer.preventsDisplaySleepDuringVideoPlayback = NO;
+            AVPlayerItem *item = videoOnlyItem(url, blurRadius());
+            if (item) _ownLooper = [AVPlayerLooper playerLooperWithPlayer:_ownPlayer templateItem:item];
+        }
+        if (!_playerLayer || _playerLayer.player != _ownPlayer) {
+            [_playerLayer removeFromSuperlayer];
+            _playerLayer = [AVPlayerLayer playerLayerWithPlayer:_ownPlayer];
+            [_canvas.layer insertSublayer:_playerLayer below:_dim.layer];
+        }
+        BOOL play = !MRGEffectsPaused() && self.window && !self.hidden;
+        if (play && _ownPlayer.rate == 0) [_ownPlayer play];
+        else if (!play && _ownPlayer.rate != 0) [_ownPlayer pause];
     } else if (!_posterUp) {
         _imageView.image = nil;
         _imageView.hidden = YES;
     }
-    if (kind == MRGMediaVideo) {
-        [MRGVideoEngine.shared reload];
-        if (!_playerLayer) {
+    if (kind == MRGMediaVideo && !ownVideo) {
+        [self stopOwnVideo];
+        _usesShared = YES;
+        [MRGVideoEngine.shared reloadURL:url];
+        if (!_playerLayer || _playerLayer.player != MRGVideoEngine.shared.player) {
+            [_playerLayer removeFromSuperlayer];
             _playerLayer = [AVPlayerLayer playerLayerWithPlayer:MRGVideoEngine.shared.player];
             [_canvas.layer insertSublayer:_playerLayer below:_dim.layer];
             [self showPosterIfNeeded];
         }
+        if (self.window && !self.hidden) [MRGVideoEngine.shared viewAppeared:self];
+    } else if (!ownVideo && kind != MRGMediaImage) {
+        [MRGVideoEngine.shared reload];
+    }
+    if (_playerLayer) {
         _playerLayer.videoGravity = scale == MRGScaleFit ? AVLayerVideoGravityResizeAspect
                                   : scale == MRGScaleStretch ? AVLayerVideoGravityResize : AVLayerVideoGravityResizeAspectFill;
-    } else {
-        [MRGVideoEngine.shared reload];
     }
     [self setNeedsLayout];
 }
@@ -310,7 +374,7 @@ static NSString *sg_stillKey;
 - (void)dropPoster {
     if (!_posterUp) return;
     _posterUp = NO;
-    if (MRGCurrentKind() != MRGMediaImage) { _imageView.image = nil; _imageView.hidden = YES; }
+    if (MRGKindForScreen(self.screen) != MRGMediaImage) { _imageView.image = nil; _imageView.hidden = YES; }
 }
 
 - (void)pinCanvas {
@@ -370,14 +434,22 @@ static NSString *sg_stillKey;
     }
     if (self.window) [self pinCanvas];
     if (self.window && !_playerLayer.isReadyForDisplay) [self showPosterIfNeeded];
-    if (self.window && !self.hidden) [MRGVideoEngine.shared viewAppeared:self];
-    else [MRGVideoEngine.shared viewDisappeared:self];
+    if (_usesShared && self.window && !self.hidden) [MRGVideoEngine.shared viewAppeared:self];
+    else if (_usesShared) [MRGVideoEngine.shared viewDisappeared:self];
+    if (_ownPlayer) {
+        BOOL play = !MRGEffectsPaused() && self.window && !self.hidden;
+        if (play) [_ownPlayer play]; else [_ownPlayer pause];
+    }
 }
 
 - (void)setHidden:(BOOL)hidden {
     [super setHidden:hidden];
-    if (self.window && !hidden) [MRGVideoEngine.shared viewAppeared:self];
-    else [MRGVideoEngine.shared viewDisappeared:self];
+    if (_usesShared && self.window && !hidden) [MRGVideoEngine.shared viewAppeared:self];
+    else if (_usesShared) [MRGVideoEngine.shared viewDisappeared:self];
+    if (_ownPlayer) {
+        BOOL play = !MRGEffectsPaused() && self.window && !hidden;
+        if (play) [_ownPlayer play]; else [_ownPlayer pause];
+    }
 }
 
 @end

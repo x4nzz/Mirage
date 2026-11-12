@@ -4,3 +4,4 @@ void MRGRegisterSettingsPage(void);              // makes the page a Spotify pag
 void MRGShowSettings(UIViewController *owner);   // push on Spotify's stack, or present
 
 void MRGShowDJSettings(UIViewController *owner);   // the AI DJ settings page
+void MRGShowBackgroundSettings(UIViewController *owner);   // the Backgrounds page
