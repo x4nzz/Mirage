@@ -490,6 +490,8 @@ UIViewController *MRGVoicePage(void) { return [MRGVoicePageController new]; }
 
 - (void)viewWillDisappear:(BOOL)animated { [super viewWillDisappear:animated]; MRGDJSetCustomPrompt(_prompt.text); }
 - (void)textViewDidEndEditing:(UITextView *)tv { MRGDJSetCustomPrompt(tv.text); }
+// Saved as it is typed, so closing Spotify mid-sentence keeps it.
+- (void)textViewDidChange:(UITextView *)tv { MRGDJSetCustomPrompt(tv.text); }
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)t { return 3; }
 - (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)s {

@@ -7,6 +7,8 @@ static NSUserDefaults *D(void) { return NSUserDefaults.standardUserDefaults; }
 static id V(NSString *k, id def) { id v = [D() objectForKey:k]; return [v isKindOfClass:NSNumber.class] ? v : def; }
 
 void MRGPostChange(void) {
+    // Written through to disk now, not whenever the system gets to it, so a change survives Spotify being closed right after.
+    [D() synchronize];
     void (^post)(void) = ^{ [NSNotificationCenter.defaultCenter postNotificationName:MRGSettingsChangedNotification object:nil]; };
     if (NSThread.isMainThread) post(); else dispatch_async(dispatch_get_main_queue(), post);
 }

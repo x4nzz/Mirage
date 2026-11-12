@@ -109,6 +109,80 @@ static void applyPrefs(NSDictionary *prefs) {
     MRGPostChange();
 }
 
+#pragma mark - autosave
+
+// Every Mirage setting is in NSUserDefaults the moment it changes. On top of that, the same settings (never API keys,
+// history or per-launch flags) are copied to Documents/Mirage/settings-autosave.plist after each change and when
+// Spotify leaves the screen. If Spotify's defaults come back empty (a reinstall or a container that kept Documents but
+// not Preferences), that copy is loaded at the next launch, before any add-on starts.
+static NSURL *autosaveURL(void) {
+    NSURL *docs = [NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
+    NSURL *dir = [docs URLByAppendingPathComponent:@"Mirage" isDirectory:YES];
+    [NSFileManager.defaultManager createDirectoryAtURL:dir withIntermediateDirectories:YES attributes:nil error:nil];
+    return [dir URLByAppendingPathComponent:@"settings-autosave.plist"];
+}
+
+static NSDictionary *currentPrefs(void) {
+    NSMutableDictionary *prefs = [NSMutableDictionary dictionary];
+    [NSUserDefaults.standardUserDefaults.dictionaryRepresentation enumerateKeysAndObjectsUsingBlock:^(NSString *key, id obj, BOOL *stop) {
+        if (settingsKey(key) && plistValue(obj)) prefs[key] = obj;
+    }];
+    return prefs;
+}
+
+static NSDictionary *sLastSaved;
+static BOOL sSaveQueued;
+
+static void autosaveNow(void) {
+    @try {
+        [NSUserDefaults.standardUserDefaults synchronize];
+        NSDictionary *prefs = currentPrefs();
+        if (!prefs.count || [prefs isEqualToDictionary:sLastSaved ?: @{}]) return;
+        if ([prefs writeToURL:autosaveURL() atomically:YES]) sLastSaved = prefs;
+    } @catch (NSException *e) {
+        MRGDJLog(@"settings: autosave threw %@", e.reason);
+    }
+}
+
+static void autosaveSoon(void) {
+    if (sSaveQueued) return;
+    sSaveQueued = YES;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        sSaveQueued = NO;
+        autosaveNow();
+    });
+}
+
+static void autosaveRestore(void) {
+    @try {
+        if (currentPrefs().count) return;   // settings are there: nothing to bring back
+        NSDictionary *saved = [NSDictionary dictionaryWithContentsOfURL:autosaveURL()];
+        if (![saved isKindOfClass:NSDictionary.class] || !saved.count) return;
+        NSUserDefaults *d = NSUserDefaults.standardUserDefaults;
+        __block NSUInteger n = 0;
+        [saved enumerateKeysAndObjectsUsingBlock:^(id key, id obj, BOOL *stop) {
+            if ([key isKindOfClass:NSString.class] && settingsKey(key) && plistValue(obj)) { [d setObject:obj forKey:key]; n++; }
+        }];
+        [d synchronize];
+        sLastSaved = saved;
+        MRGDJLog(@"settings: restored %lu settings from the autosave", (unsigned long)n);
+    } @catch (NSException *e) {
+        MRGDJLog(@"settings: autosave restore threw %@", e.reason);
+    }
+}
+
+__attribute__((constructor)) static void mrgAutosaveConstructor(void) {
+    // Before the add-ons start (they start on the main queue's first turn).
+    autosaveRestore();
+    NSNotificationCenter *nc = NSNotificationCenter.defaultCenter;
+    [nc addObserverForName:MRGSettingsChangedNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) { autosaveSoon(); }];
+    // Setters that don't announce themselves (the DJ's voice sliders, its persona) are caught here. Posted on whatever
+    // thread wrote the default; the save itself is coalesced on the main queue and skipped when nothing of Mirage's changed.
+    [nc addObserverForName:NSUserDefaultsDidChangeNotification object:NSUserDefaults.standardUserDefaults queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) { autosaveSoon(); }];
+    for (NSString *name in @[UIApplicationWillResignActiveNotification, UIApplicationDidEnterBackgroundNotification, UIApplicationWillTerminateNotification])
+        [nc addObserverForName:name object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) { autosaveNow(); }];
+}
+
 static NSString *safeName(NSString *name) {
     NSString *base = name.lastPathComponent;
     if (!base.length || [base containsString:@"/"] || [base containsString:@".."]) return nil;
@@ -166,7 +240,7 @@ static void savePresets(NSArray *list) {
     return @[@"File", @"On this iPhone", @"Presets"][s];
 }
 - (NSString *)tableView:(UITableView *)t titleForFooterInSection:(NSInteger)s {
-    if (s == 0) return self.note ?: @"Background pictures are saved by name. Turn on Include background files to put the pictures in the file too. API keys stay in the keychain and are never exported. Listening history isn't part of this file.";
+    if (s == 0) return self.note ?: @"Every change you make in Mirage is saved automatically, right away. Export makes a file you can keep or move to another phone. Background pictures are saved by name. Turn on Include background files to put the pictures in the file too. API keys stay in the keychain and are never exported. Listening history isn't part of this file.";
     if (s == 2) return @"A preset is a named look on this iPhone, such as Gym. Applying one restores those settings. It doesn't touch your API keys.";
     return nil;
 }
@@ -195,7 +269,7 @@ static void savePresets(NSArray *list) {
         return c;
     });
 }
-- (void)include:(UISwitch *)sw { [NSUserDefaults.standardUserDefaults setBool:sw.on forKey:kInclude]; }
+- (void)include:(UISwitch *)sw { [NSUserDefaults.standardUserDefaults setBool:sw.on forKey:kInclude]; MRGPostChange(); }
 - (void)alert:(NSString *)title message:(NSString *)message { 
     UIAlertController *a = [UIAlertController alertControllerWithTitle:title message:message preferredStyle:UIAlertControllerStyleAlert];
     [a addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
