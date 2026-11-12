@@ -27,32 +27,40 @@ MRGPalette MRGPaletteFromImage(UIImage *image) {
     CGContextSetInterpolationQuality(ctx, kCGInterpolationMedium);
     CGContextDrawImage(ctx, CGRectMake(0, 0, N, N), cg);
     CGContextRelease(ctx);
-    double sumR[Groups] = {0}, sumG[Groups] = {0}, sumB[Groups] = {0}, sumS[Groups] = {0}, sumV[Groups] = {0};
+    // 0.6.8: the middle of a cover counts more than its edges (borders, frames and text bands sit there), and a
+    // color needs a real share of the weighted cover to count as its vibrant one.
+    double sumR[Groups] = {0}, sumG[Groups] = {0}, sumB[Groups] = {0}, sumS[Groups] = {0}, sumV[Groups] = {0}, weight[Groups] = {0};
     int count[Groups] = {0};
     int total = 0;
+    double totalWeight = 0;
     for (int i = 0; i < N * N; i++) {
         if (px[i * 4 + 3] < 128) continue;
+        int x = i % N, y = i / N;
+        double dx = fabs(x + 0.5 - N / 2.0) / (N / 2.0), dy = fabs(y + 0.5 - N / 2.0) / (N / 2.0);
+        double w = 1.0 - 0.55 * MIN(1.0, MAX(dx, dy) * MAX(dx, dy));
         double r = px[i * 4] / 255.0, g = px[i * 4 + 1] / 255.0, b = px[i * 4 + 2] / 255.0, h, s, v;
         hsv(r, g, b, &h, &s, &v);
         int vb = v < 0.35 ? 0 : v < 0.7 ? 1 : 2;
-        int group = s < 0.16 ? 36 + vb : (int)MIN(11, floor(h * 12)) * 3 + vb;
-        sumR[group] += r; sumG[group] += g; sumB[group] += b; sumS[group] += s; sumV[group] += v;
+        int group = (s < 0.16 || v < 0.08) ? 36 + vb : (int)MIN(11, floor(h * 12)) * 3 + vb;
+        sumR[group] += r * w; sumG[group] += g * w; sumB[group] += b * w; sumS[group] += s * w; sumV[group] += v * w;
+        weight[group] += w;
         count[group]++;
         total++;
+        totalWeight += w;
     }
-    if (total < 16) return p;
+    if (total < 16 || totalWeight <= 0) return p;
     int dom = -1, vib = -1;
     double vibScore = 0;
     for (int k = 0; k < Groups; k++) {
         if (!count[k]) continue;
-        if (dom < 0 || count[k] > count[dom]) dom = k;
+        if (dom < 0 || weight[k] > weight[dom]) dom = k;
         if (k >= 36) continue;
-        double share = (double)count[k] / total, s = sumS[k] / count[k], v = sumV[k] / count[k];
-        if (share < 0.03 || s < 0.25 || v < 0.2) continue;
+        double share = weight[k] / totalWeight, s = sumS[k] / weight[k], v = sumV[k] / weight[k];
+        if (share < 0.025 || s < 0.25 || v < 0.2) continue;
         double score = sqrt(share) * s * s * (0.4 + v);
         if (score > vibScore) { vibScore = score; vib = k; }
     }
-#define RGB_OF(k) (((NSInteger)lround(sumR[k] / count[k] * 255) << 16) | ((NSInteger)lround(sumG[k] / count[k] * 255) << 8) | (NSInteger)lround(sumB[k] / count[k] * 255))
+#define RGB_OF(k) (((NSInteger)lround(sumR[k] / weight[k] * 255) << 16) | ((NSInteger)lround(sumG[k] / weight[k] * 255) << 8) | (NSInteger)lround(sumB[k] / weight[k] * 255))
     if (dom >= 0) p.dominant = RGB_OF(dom);
     if (vib >= 0) p.vibrant = RGB_OF(vib);
 #undef RGB_OF

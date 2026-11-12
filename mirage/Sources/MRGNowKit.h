@@ -28,12 +28,14 @@ void MRGNowRelayout(void);            // every client again, now, for what's on 
 
 UIStackView *MRGNowRowIn(UIView *root);     // a unit's row: a stack wider than 200pt holding 2 items or more
 UIView *MRGNowCoverIn(UIView *tilt);        // the cover inside a tilt view: its biggest visible subview
-UIImage *MRGNowCoverImage(UIView *tilt);    // the biggest image showing in it
+UIImage *MRGNowCoverImage(UIView *tilt);    // the picture showing in it (an image view's, or a layer's contents)
 CGFloat MRGNowCoverRadius(UIView *tilt);    // the corner radius the cover is drawn with (tilt view, cover or inside it)
 // Clips the cover itself to that radius (on) or puts its own rounding back (off): for an add-on that unclips the tilt
 // view (Vinyl's record overhangs it), so the cover's corners stay round with nothing light showing past them.
 void MRGNowRoundCover(UIView *tilt, BOOL on);
-UIColor *MRGNowVividColor(UIImage *image);  // the image's average color, pushed to stay colorful and visible on black
+// The playing song's cover picture: Vitrine's (when it is that song's), else its cover URL, cached. Main queue.
+void MRGNowCurrentArtwork(void (^done)(UIImage *image, NSString *uri));
+UIColor *MRGNowVividColor(UIImage *image);  // the image's vibrant (else dominant) color, lifted to read on black
 BOOL MRGNowClassNamed(id obj, NSString *part);
 
 // Hiding Spotify's own views, kept reversible: the view's alpha and touch handling are saved the first time.

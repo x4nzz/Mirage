@@ -2,6 +2,9 @@
 #import "MRGCompat.h"
 #import "MRGDJLog.h"
 #import <objc/runtime.h>
+#import <dlfcn.h>
+#import "MRGPlayer.h"
+#import "Addons/MRGPalette.h"
 
 static NSMutableArray<MRGNowPartClient> *sPartClients;
 static NSMutableArray<MRGNowCoverClient> *sCoverClients;
@@ -83,11 +86,33 @@ UIView *MRGNowCoverIn(UIView *tilt) {
     return best;
 }
 
+// 0.6.8 root cause of "From the cover" staying black: 9.1.90 draws the cover into a layer's contents (no UIImageView
+// holds it), so a search for image views found nothing and every cover-colored add-on fell back. A layer's CGImage
+// counts now too (one UIImage per CGImage, kept on the layer, so "same picture" checks stay cheap).
+static char kLayerImageKey;
+static UIImage *layerImage(CALayer *layer) {
+    id contents = layer.contents;
+    if (!contents || CFGetTypeID((__bridge CFTypeRef)contents) != CGImageGetTypeID()) return nil;
+    CGImageRef cg = (__bridge CGImageRef)contents;
+    if (CGImageGetWidth(cg) < 60 || CGImageGetHeight(cg) < 60) return nil;
+    UIImage *kept = objc_getAssociatedObject(layer, &kLayerImageKey);
+    if (kept.CGImage == cg) return kept;
+    kept = [UIImage imageWithCGImage:cg];
+    objc_setAssociatedObject(layer, &kLayerImageKey, kept, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    return kept;
+}
 static UIImage *imageIn(UIView *v, int depth) {
-    if (!v || depth > 8) return nil;
+    if (!v || depth > 8 || [NSStringFromClass(v.class) hasPrefix:@"MRG"]) return nil;
     if ([v isKindOfClass:UIImageView.class]) {
         UIImage *img = ((UIImageView *)v).image;
-        if (img.size.width >= 60) return img;
+        if (img.size.width >= 60 && img.CGImage) return img;
+    }
+    UIImage *own = layerImage(v.layer);
+    if (own) return own;
+    for (CALayer *l in v.layer.sublayers) {
+        if (l.delegate) continue;   // a view's layer: reached through its view
+        UIImage *i = layerImage(l);
+        if (i) return i;
     }
     for (UIView *s in v.subviews) { UIImage *i = imageIn(s, depth + 1); if (i) return i; }
     return nil;
@@ -138,32 +163,47 @@ void MRGNowRoundCover(UIView *tilt, BOOL on) {
     }
 }
 
+// The playing song's cover as a picture: what Vitrine keeps for it (when it is that song's), else the song's cover URL,
+// downloaded once and kept in memory. `done` on the main queue, nil when neither could be read.
+void MRGNowCurrentArtwork(void (^done)(UIImage *image, NSString *uri)) {
+    if (!done) return;
+    static NSCache *byURL;
+    if (!byURL) { byURL = [NSCache new]; byURL.countLimit = 12; }
+    NSDictionary *now = MRGNowPlaying();
+    NSString *uri = [now[@"uri"] isKindOfClass:NSString.class] ? now[@"uri"] : nil;
+    UIImage *(*art)(NSString **, NSString **) = (UIImage *(*)(NSString **, NSString **))dlsym(RTLD_DEFAULT, "SGRNowPlayingArtwork");
+    if (art) {
+        NSString *artURI = nil;
+        UIImage *image = nil;
+        @try { image = art(&artURI, NULL); } @catch (NSException *e) { image = nil; }
+        if (image.CGImage && (!artURI.length || !uri.length || [artURI isEqualToString:uri])) { done(image, uri); return; }
+    }
+    NSString *url = [now[@"image"] isKindOfClass:NSString.class] ? now[@"image"] : nil;
+    if (![url hasPrefix:@"https://"]) { done(nil, uri); return; }
+    UIImage *hit = [byURL objectForKey:url];
+    if (hit) { done(hit, uri); return; }
+    NSMutableURLRequest *r = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:url]];
+    r.timeoutInterval = 10;
+    [[NSURLSession.sharedSession dataTaskWithRequest:r completionHandler:^(NSData *data, NSURLResponse *resp, NSError *error) {
+        UIImage *got = data.length ? [UIImage imageWithData:data] : nil;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (got) [byURL setObject:got forKey:url];
+            done(got, uri);
+        });
+    }] resume];
+}
+
+// 0.6.8: from MRGPalette (the cover's vibrant color, else its dominant one, lifted to read on black), not an 8x8
+// average: the average of a two-color cover is mud, and a cover read as a whole gray gave every "cover" color white.
 UIColor *MRGNowVividColor(UIImage *image) {
-    CGImageRef cg = image.CGImage;
-    if (!cg) return nil;
+    if (!image.CGImage) return nil;
     static NSMapTable *cache;
     if (!cache) cache = [NSMapTable weakToStrongObjectsMapTable];
     UIColor *hit = [cache objectForKey:image];
     if (hit) return hit;
-    // 8x8 average, then the most colorful cell of them (an average of a two-color cover is mud).
-    uint8_t px[8 * 8 * 4] = {0};
-    CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
-    CGContextRef ctx = CGBitmapContextCreate(px, 8, 8, 8, 32, space, (CGBitmapInfo)kCGImageAlphaPremultipliedLast);
-    CGColorSpaceRelease(space);
-    if (!ctx) return nil;
-    CGContextSetInterpolationQuality(ctx, kCGInterpolationMedium);
-    CGContextDrawImage(ctx, CGRectMake(0, 0, 8, 8), cg);
-    CGContextRelease(ctx);
-    CGFloat bestScore = -1, bh = 0, bs = 0, bb = 0;
-    for (int i = 0; i < 64; i++) {
-        UIColor *c = [UIColor colorWithRed:px[i * 4] / 255.0 green:px[i * 4 + 1] / 255.0 blue:px[i * 4 + 2] / 255.0 alpha:1];
-        CGFloat h, s, b, a;
-        if (![c getHue:&h saturation:&s brightness:&b alpha:&a]) continue;
-        CGFloat score = s * (0.35 + b);
-        if (score > bestScore) { bestScore = score; bh = h; bs = s; bb = b; }
-    }
-    UIColor *out = bestScore < 0.08 ? [UIColor colorWithWhite:0.92 alpha:1]   // a gray cover: white
-        : [UIColor colorWithHue:bh saturation:MIN(1, MAX(0.45, bs * 1.15)) brightness:MAX(0.78, bb) alpha:1];
+    NSInteger rgb = MRGPaletteAccent(MRGPaletteFromImage(image));
+    if (rgb < 0) return nil;
+    UIColor *out = [UIColor colorWithRed:((rgb >> 16) & 255) / 255.0 green:((rgb >> 8) & 255) / 255.0 blue:(rgb & 255) / 255.0 alpha:1];
     [cache setObject:out forKey:image];
     return out;
 }

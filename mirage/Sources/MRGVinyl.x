@@ -34,6 +34,7 @@
 #import "MRGPlayer.h"
 #import "MRGDJLog.h"
 #import "MRGNowKit.h"
+#import "Addons/MRGPalette.h"
 #import "MRGSpotifyWeb.h"
 
 // 0.6.6 variants: the record's color (black, the cover's own colors, the accent, clear red, white), the sleeve's
@@ -130,7 +131,7 @@ static void logState(NSString *state) {
     CAShapeLayer *_sheenMask;
     CADisplayLink *_link;
     NSUInteger _frames;
-    __weak UIImage *_shownImage;
+    UIImage *_shownImage;
     NSString *_shownURL;
     double _turn;
     BOOL _spinning, _built, _followed;
@@ -139,7 +140,8 @@ static void logState(NSString *state) {
     CGAffineTransform _lastM;
     float _lastOpacity;
     NSInteger _colorMode;
-    __weak UIImage *_colorImage;
+    UIImage *_colorImage;
+    NSString *_artworkAsked;   // the song whose artwork was asked for (no picture in the cover view)
 }
 
 - (instancetype)initWithFrame:(CGRect)frame {
@@ -317,6 +319,7 @@ static void logState(NSString *state) {
 - (void)trackChanged {
     _shownImage = nil;   // the next tick reads the new cover
     _shownURL = nil;
+    _artworkAsked = nil;
     [self.tilt setNeedsLayout];
     [self fetchTempo];
 }
@@ -354,24 +357,66 @@ static void logState(NSString *state) {
     [CATransaction commit];
 }
 
+// The record's tint from a cover: its vibrant color (else the one covering most of it), from MRGPalette.
+static UIColor *recordTint(UIImage *img) {
+    NSInteger rgb = MRGPaletteAccent(MRGPaletteFromImage(img));
+    if (rgb < 0) return nil;
+    return [UIColor colorWithRed:((rgb >> 16) & 255) / 255.0 green:((rgb >> 8) & 255) / 255.0 blue:(rgb & 255) / 255.0 alpha:1];
+}
+
 // The record's colors: 0 black, 1 the cover's, 2 the accent, 3 clear red, 4 white.
 static UIColor *shade(UIColor *c, CGFloat brightness, CGFloat alpha) {
     CGFloat h, sat, b, a;
     if (![c getHue:&h saturation:&sat brightness:&b alpha:&a]) return [UIColor colorWithWhite:brightness alpha:alpha];
     return [UIColor colorWithHue:h saturation:MIN(1, sat * 1.05) brightness:brightness alpha:alpha];
 }
+// The record on screen (the carousel keeps the songs either side in their own tilt views, off to the sides).
+- (BOOL)isCentered {
+    UIView *tilt = self.tilt;
+    UIWindow *w = tilt.window;
+    if (!w) return NO;
+    CGRect f = [tilt convertRect:tilt.bounds toView:w];
+    return CGRectGetMidX(f) > 0 && CGRectGetMidX(f) < w.bounds.size.width;
+}
+
+- (void)askArtwork {
+    if (![self isCentered]) return;
+    NSString *uri = MRGNowPlaying()[@"uri"];
+    if (!uri.length || [uri isEqualToString:_artworkAsked]) return;
+    _artworkAsked = [uri copy];
+    __weak MRGVinylView *weak = self;
+    MRGNowCurrentArtwork(^(UIImage *image, NSString *forURI) {
+        MRGVinylView *s = weak;
+        if (!s || !image.CGImage || ![forURI isEqualToString:MRGNowPlaying()[@"uri"]] || ![s isCentered]) return;
+        if (s->_shownImage && MRGNowCoverImage(s.tilt)) return;   // the view has its own picture by now
+        s->_shownImage = image;
+        s->_colorMode = -1;
+        [s applyColors:YES];
+        [s applyLabel];
+    });
+}
+
 - (void)applyColors:(BOOL)imageChanged {
     NSInteger mode = recordColor();
     if (mode == _colorMode && !(mode == 1 && imageChanged)) return;
     UIColor *tint = nil;
+    BOOL resolved = YES;
     if (mode == 1) {
         UIImage *img = _shownImage ?: MRGNowCoverImage(self.tilt);
         if (img && img == _colorImage && mode == _colorMode) return;
         _colorImage = img;
-        tint = img ? MRGNowVividColor(img) : nil;
-        if (!tint) mode = 0;
+        tint = img ? recordTint(img) : nil;
+        if (!tint) {
+            // 0.6.8 root cause of the black record: with no picture found in the cover view, this fell back to black
+            // and still marked "From the cover" as applied, so it never looked again. Now the song's own artwork is
+            // read (Vitrine's, else its cover URL) for the record on screen, and it keeps trying until it has one.
+            resolved = NO;
+            [self askArtwork];
+            if (_colorMode == -2) return;   // already showing the stand-in
+            mode = 0;
+        }
     } else if (mode == 2) tint = MRGAccent();
-    _colorMode = recordColor();
+    _colorMode = resolved ? recordColor() : -2;
     [CATransaction begin];
     // 0.6.7 root cause of "record color changes nothing": these layers are inside the disc, whose speed is 0 whenever
     // the record stands still (paused, Low Power Mode). An implicit animation added to them then never runs, so the
@@ -505,23 +550,13 @@ static UIView *coverIn(UIView *tilt) {
         // Low Power Mode: the record holds still (it still follows the cover), like the other animated add-ons.
         [self setSpinning:MRGPlayerIsPlaying() && !NSProcessInfo.processInfo.isLowPowerModeEnabled];
         UIImage *img = coverImage([self trackedCover] ?: self.tilt, 0);
-        if (img && img != _shownImage && img.CGImage) {
+        if (img && img.CGImage && img.CGImage != _shownImage.CGImage) {
             _shownImage = img;
             _label.contents = labelStyle() == 1 ? nil : (__bridge id)img.CGImage;
             [self applyColors:YES];
             [self applyLabel];
-        } else if (_colorMode < 0) [self applyColors:NO]; else if (!img && !_label.contents) {
-            NSDictionary *now = MRGNowPlaying();
-            NSString *url = [now[@"image"] isKindOfClass:NSString.class] ? now[@"image"] : nil;
-            if (url.length && ![url isEqualToString:_shownURL] && [url hasPrefix:@"https://"]) {
-                _shownURL = url;
-                __weak MRGVinylView *weak = self;
-                [[NSURLSession.sharedSession dataTaskWithURL:[NSURL URLWithString:url] completionHandler:^(NSData *data, NSURLResponse *r, NSError *e) {
-                    UIImage *got = data.length ? [UIImage imageWithData:data] : nil;
-                    if (got) dispatch_async(dispatch_get_main_queue(), ^{ MRGVinylView *s = weak; if (s && !s->_shownImage && labelStyle() != 1) s->_label.contents = (__bridge id)got.CGImage; });
-                }] resume];
-            }
-        }
+        } else if (_colorMode < 0) [self applyColors:NO];
+        else if (!img && !_shownImage) [self askArtwork];   // no picture in the view: the song's artwork, for the label too
     } @catch (NSException *e) {
         MRGDJLog(@"vinyl: tick threw %@", e.reason);
     }
