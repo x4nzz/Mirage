@@ -21,6 +21,24 @@
       "min_mirage": "0.6.0"
     },
     {
+      "id": "playlist-tools",
+      "name": "Playlist tools",
+      "description": "Sort a playlist, remove duplicates, or save a shuffled copy. Every change asks first and can be undone.",
+      "version": "1.0",
+      "type": "Library",
+      "author": "Mirage",
+      "min_mirage": "0.6.0"
+    },
+    {
+      "id": "genres",
+      "name": "Genres",
+      "description": "Shows the current song's genres on Now Playing. Uses Spotify's own player data when it has genres, otherwise the artist's genres, cached on this phone.",
+      "version": "1.0",
+      "type": "Now Playing",
+      "author": "Mirage",
+      "min_mirage": "0.6.0"
+    },
+    {
       "id": "popup-lyrics",
       "name": "Pop-up lyrics",
       "description": "Apple Music-style synced lyrics at the top of Home, using Vitrine's lyrics. Home still scrolls and the DJ chip stays put.",
