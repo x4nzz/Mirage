@@ -70,10 +70,7 @@ static CGPathRef ringPath(CGRect r, CGFloat radius) {
 }
 
 - (CGFloat)coverRadius {
-    UIView *cover = self.superview;
-    CGFloat r = cover.layer.cornerRadius;
-    for (UIView *s in cover.subviews) if (s != self && s.layer.cornerRadius > r && s.bounds.size.width > cover.bounds.size.width * 0.9) r = s.layer.cornerRadius;
-    return r;
+    return MRGNowCoverRadius(self.tilt ?: self.superview.superview);
 }
 
 - (void)layoutSubviews {

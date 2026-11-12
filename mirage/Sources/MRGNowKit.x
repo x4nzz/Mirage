@@ -94,6 +94,50 @@ static UIImage *imageIn(UIView *v, int depth) {
 }
 UIImage *MRGNowCoverImage(UIView *tilt) { return imageIn(MRGNowCoverIn(tilt) ?: tilt, 0); }
 
+// The rounding the cover is drawn with: the tilt view's, the cover's or one of the cover-sized views inside it
+// (Spotify rounds the tilt view; Vitrine rounds the cover-sized views when its backdrop is on).
+CGFloat MRGNowCoverRadius(UIView *tilt) {
+    if (!tilt) return 0;
+    CGFloat r = tilt.layer.cornerRadius;
+    UIView *cover = MRGNowCoverIn(tilt);
+    if (!cover) return r;
+    CGFloat side = MIN(cover.bounds.size.width, cover.bounds.size.height);
+    NSMutableArray<UIView *> *stack = [NSMutableArray arrayWithObject:cover];
+    NSUInteger seen = 0;
+    while (stack.count && seen < 60) {
+        UIView *v = stack.lastObject; [stack removeLastObject]; seen++;
+        if ([NSStringFromClass(v.class) hasPrefix:@"MRG"]) continue;
+        if (MIN(v.bounds.size.width, v.bounds.size.height) >= side * 0.9) {
+            r = MAX(r, v.layer.cornerRadius);
+            [stack addObjectsFromArray:v.subviews];
+        }
+    }
+    return MIN(r, side / 2);
+}
+
+static char kRoundedKey;
+void MRGNowRoundCover(UIView *tilt, BOOL on) {
+    UIView *cover = MRGNowCoverIn(tilt);
+    if (!cover) return;
+    NSArray *saved = objc_getAssociatedObject(cover, &kRoundedKey);
+    if (!on) {
+        if (!saved) return;
+        cover.layer.cornerRadius = [saved[0] doubleValue];
+        cover.layer.masksToBounds = [saved[1] boolValue];
+        objc_setAssociatedObject(cover, &kRoundedKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        return;
+    }
+    CGFloat r = MRGNowCoverRadius(tilt);
+    if (r < 0.5) return;
+    if (!saved) objc_setAssociatedObject(cover, &kRoundedKey, @[@(cover.layer.cornerRadius), @(cover.layer.masksToBounds)], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    if (fabs(cover.layer.cornerRadius - r) > 0.25) cover.layer.cornerRadius = r;
+    if (!cover.layer.masksToBounds) cover.layer.masksToBounds = YES;
+    if (@available(iOS 13.0, *)) {
+        NSString *curve = tilt.layer.cornerRadius > 0 ? tilt.layer.cornerCurve : kCACornerCurveContinuous;
+        if (![cover.layer.cornerCurve isEqualToString:curve]) cover.layer.cornerCurve = curve;
+    }
+}
+
 UIColor *MRGNowVividColor(UIImage *image) {
     CGImageRef cg = image.CGImage;
     if (!cg) return nil;

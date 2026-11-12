@@ -545,7 +545,7 @@ static UIView *coverIn(UIView *tilt) {
     CAShapeLayer *_edge, *_wear, *_crease;
     CGSize _built;
     NSInteger _builtStyle;
-    CGFloat _builtDir;
+    CGFloat _builtDir, _builtRadius;
 }
 - (instancetype)initWithFrame:(CGRect)frame {
     if (!(self = [super initWithFrame:frame])) return nil;
@@ -569,12 +569,16 @@ static UIView *coverIn(UIView *tilt) {
 - (void)layoutSubviews {
     [super layoutSubviews];
     CGRect b = self.bounds;
-    if (CGSizeEqualToSize(b.size, _built) && _style == _builtStyle && _dir == _builtDir) return;
-    _built = b.size; _builtStyle = _style; _builtDir = _dir;
+    // 0.6.8 root cause of the white corners: the radius was read once, from the cover and its direct children only,
+    // and kept with the size. Spotify rounds the tilt view (and Vitrine the views deeper in), so the sleeve's gloss and
+    // lit edge were drawn as a square and showed light corners past the rounded picture. The cover's real radius is
+    // read on every pass now (the tilt view's included), and the sleeve follows it when it changes.
     UIView *cover = self.superview;
-    CGFloat r = cover.layer.cornerRadius;
-    for (UIView *s in cover.subviews) if (s != self && s.layer.cornerRadius > r) r = s.layer.cornerRadius;
+    CGFloat r = MRGNowCoverRadius(cover.superview);
+    if (CGSizeEqualToSize(b.size, _built) && _style == _builtStyle && _dir == _builtDir && fabs(r - _builtRadius) < 0.25) return;
+    _built = b.size; _builtStyle = _style; _builtDir = _dir; _builtRadius = r;
     self.layer.cornerRadius = r;
+    if (@available(iOS 13.0, *)) self.layer.cornerCurve = cover.superview.layer.cornerRadius > 0 ? cover.superview.layer.cornerCurve : kCACornerCurveContinuous;
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
     for (CALayer *l in @[_gloss, _edge, _wear, _crease]) { l.frame = b; l.hidden = YES; }
@@ -637,6 +641,7 @@ static void restore(UIView *tilt) {
     }
     NSNumber *clip = objc_getAssociatedObject(tilt, &kClipKey);
     if (clip) tilt.clipsToBounds = clip.boolValue;
+    MRGNowRoundCover(tilt, NO);
     NSHashTable *unclipped = objc_getAssociatedObject(tilt, &kUnclippedKey);
     for (UIView *v in unclipped.allObjects) v.clipsToBounds = YES;
     objc_setAssociatedObject(tilt, &kUnclippedKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -753,6 +758,8 @@ static void MRGVinylApply(UIView *tilt) {
         }];
         if (vinyl.superview != tilt) [tilt insertSubview:vinyl atIndex:0];
         else if (tilt.subviews.firstObject != vinyl) [tilt sendSubviewToBack:vinyl];
+        // The tilt view no longer clips (the record overhangs it), so the cover clips itself to the same rounding.
+        MRGNowRoundCover(tilt, YES);
         placeSleeve(tilt, coverIn(tilt), dir);
         if (fresh && tilt.window && CACurrentMediaTime() < sg_glideUntil) {
             vinyl.alpha = 0;

@@ -29,6 +29,10 @@ void MRGNowRelayout(void);            // every client again, now, for what's on 
 UIStackView *MRGNowRowIn(UIView *root);     // a unit's row: a stack wider than 200pt holding 2 items or more
 UIView *MRGNowCoverIn(UIView *tilt);        // the cover inside a tilt view: its biggest visible subview
 UIImage *MRGNowCoverImage(UIView *tilt);    // the biggest image showing in it
+CGFloat MRGNowCoverRadius(UIView *tilt);    // the corner radius the cover is drawn with (tilt view, cover or inside it)
+// Clips the cover itself to that radius (on) or puts its own rounding back (off): for an add-on that unclips the tilt
+// view (Vinyl's record overhangs it), so the cover's corners stay round with nothing light showing past them.
+void MRGNowRoundCover(UIView *tilt, BOOL on);
 UIColor *MRGNowVividColor(UIImage *image);  // the image's average color, pushed to stay colorful and visible on black
 BOOL MRGNowClassNamed(id obj, NSString *part);
 
