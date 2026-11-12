@@ -91,9 +91,9 @@ static NSArray<NSDictionary *> *scan(void) {
     return out;
 }
 
+// Empty until the scan a few seconds after launch has run (never scanned on the caller's thread).
 NSArray<NSDictionary *> *MRGOtherMirageImages(void) {
-    if (!sOthers) sOthers = scan();
-    return sOthers;
+    return sOthers ?: @[];
 }
 
 NSString *MRGDuplicateSummary(void) {
@@ -137,9 +137,13 @@ __attribute__((constructor)) static void mrgIntegrityConstructor(void) {
     @autoreleasepool {
         os_log(OS_LOG_DEFAULT, "Mirage %{public}s image %{public}s uuid %{public}s", MRG_VERSION, ownFullPath().UTF8String ?: "?", MRGImageUUID().UTF8String ?: "?");
         [NSNotificationCenter.defaultCenter addObserverForName:UIApplicationDidFinishLaunchingNotification object:nil queue:nil usingBlock:^(NSNotification *n) {
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            // The image scan reads the class list of every non-system image: on a utility queue, a few seconds in.
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3 * NSEC_PER_SEC)), dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+                NSArray *found = nil;
+                @try { found = scan(); } @catch (NSException *e) { found = @[]; }
+                dispatch_async(dispatch_get_main_queue(), ^{
                 @try {
-                    sOthers = scan();
+                    sOthers = found;
                     MRGDJLog(@"Mirage %@ running from %@ (%@)", MRGVersionLine(), MRGImagePath(), MRGImageUUID() ?: @"no uuid");
                     NSString *dup = MRGDuplicateSummary();
                     if (dup) {
@@ -148,6 +152,7 @@ __attribute__((constructor)) static void mrgIntegrityConstructor(void) {
                     }
                     warnIfDuplicate(0);
                 } @catch (NSException *e) {}
+                });
             });
         }];
     }
