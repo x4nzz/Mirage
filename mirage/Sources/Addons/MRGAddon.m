@@ -173,10 +173,21 @@ static void launchAddons(void) {
     }
     // Still set once Spotify has been up for a few seconds: a crash in those first seconds counts as a
     // launch crash. Later crashes (a song the next day) do not turn the add-on off.
+    void (^survived)(void) = ^{
+        for (id<MRGAddon> addon in MRGRegisteredAddons()) [D() removeObjectForKey:launchKey(addon.addonID)];
+        [D() synchronize];
+    };
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(12 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         if (UIApplication.sharedApplication.applicationState == UIApplicationStateBackground) return;
-        for (id<MRGAddon> addon in MRGRegisteredAddons()) [D() removeObjectForKey:launchKey(addon.addonID)];
+        survived();
     });
+    // Leaving Spotify within those seconds is not a crash either. Before, switching apps quickly left the flags set,
+    // and the next launch turned every add-on off as if it had crashed.
+    __block id token = [NSNotificationCenter.defaultCenter addObserverForName:UIApplicationDidEnterBackgroundNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
+        survived();
+        if (token) [NSNotificationCenter.defaultCenter removeObserver:token];
+        token = nil;
+    }];
 }
 
 BOOL MRGEffectsPaused(void) {
