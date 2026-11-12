@@ -410,6 +410,37 @@ static void removeTheme(void) {
 @end
 static MRGThemeRemoteTarget *sRemoteTarget;
 
+// A small picture of the theme for its shop row: its background, its glass and its accent, so the list reads like a palette.
+static UIImage *themeSwatch(NSDictionary *theme, BOOL applied) {
+    NSInteger accent = 0x8E5CFF, glass = 0x161616, bg = 0;
+    hexColor(theme[@"accent"], &accent);
+    hexColor(theme[@"glassTint"], &glass);
+    if (!hexColor(theme[@"colors"][@"background"], &bg)) bg = 0;
+    CGSize size = CGSizeMake(54, 36);
+    UIGraphicsImageRenderer *r = [[UIGraphicsImageRenderer alloc] initWithSize:size];
+    return [r imageWithActions:^(UIGraphicsImageRendererContext *ctx) {
+        CGContextRef c = ctx.CGContext;
+        CGRect all = CGRectInset((CGRect){CGPointZero, size}, 1, 1);
+        UIBezierPath *shape = [UIBezierPath bezierPathWithRoundedRect:all cornerRadius:9];
+        CGContextSaveGState(c);
+        [shape addClip];
+        [MRGColorFromRGB(bg) setFill];
+        CGContextFillRect(c, all);
+        [MRGColorFromRGB(glass) setFill];
+        CGContextFillRect(c, CGRectMake(0, size.height * 0.58, size.width, size.height));
+        [MRGColorFromRGB(accent) setFill];
+        CGContextFillEllipseInRect(c, CGRectMake(size.width - 24, 6, 16, 16));
+        [[MRGColorFromRGB(accent) colorWithAlphaComponent:0.85] setFill];
+        [[UIBezierPath bezierPathWithRoundedRect:CGRectMake(7, 9, 20, 4) cornerRadius:2] fill];
+        [[UIColor colorWithWhite:1 alpha:0.5] setFill];
+        [[UIBezierPath bezierPathWithRoundedRect:CGRectMake(7, 16, 13, 3) cornerRadius:1.5] fill];
+        CGContextRestoreGState(c);
+        [(applied ? MRGColorFromRGB(accent) : [UIColor colorWithWhite:1 alpha:0.18]) setStroke];
+        shape.lineWidth = applied ? 2 : 1;
+        [shape stroke];
+    }];
+}
+
 static void publish(void) {
     sShown = shownThemes();
     if (!sRemoteTarget) sRemoteTarget = [MRGThemeRemoteTarget new];
@@ -436,14 +467,12 @@ static void publish(void) {
         c.textLabel.text = theme[@"name"];
         c.textLabel.textColor = UIColor.whiteColor;
         BOOL on = [MRGAppliedTheme()[@"id"] isEqual:theme[@"id"]];
-        c.detailTextLabel.text = on ? @"On" : nil;
-        c.detailTextLabel.textColor = UIColor.grayColor;
+        c.textLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
+        c.detailTextLabel.text = on ? @"Applied" : nil;
+        c.detailTextLabel.textColor = on ? UIColor.whiteColor : UIColor.grayColor;
+        c.detailTextLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightSemibold];
         c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-        NSInteger rgb = 0;
-        if (hexColor(theme[@"accent"], &rgb)) {
-            c.imageView.image = [UIImage systemImageNamed:@"circle.fill"];
-            c.imageView.tintColor = MRGColorFromRGB(rgb);
-        }
+        c.imageView.image = themeSwatch(theme, on);
         return c;
     }, ^(UIViewController *shop, NSInteger row) {
         if (row < 0 || row >= (NSInteger)sShown.count) return;

@@ -2,6 +2,7 @@
 #import "MRGPrefs.h"
 #import "MRGSafe.h"
 #import "MRGDJLog.h"
+#import "Addons/MRGAddonArt.h"
 
 static NSUserDefaults *D(void) { return NSUserDefaults.standardUserDefaults; }
 static NSString *const kIndexURL = @"https://raw.githubusercontent.com/x4nzz/Mirage/main/addons/index.json";
@@ -114,86 +115,106 @@ static void loadPreview(NSDictionary *a, void (^done)(UIImage *)) {
     }] resume];
 }
 
-// Drawn when there's no preview yet: a record and a sleeve, so the card never looks empty.
-static UIImage *placeholderArt(CGSize size) {
-    UIGraphicsImageRenderer *r = [[UIGraphicsImageRenderer alloc] initWithSize:size];
-    return [r imageWithActions:^(UIGraphicsImageRendererContext *ctx) {
-        CGContextRef c = ctx.CGContext;
-        [[UIColor colorWithWhite:0.09 alpha:1] setFill];
-        CGContextFillRect(c, (CGRect){CGPointZero, size});
-        CGFloat side = size.height * 0.62, cx = size.width * 0.42, cy = size.height / 2;
-        CGRect disc = CGRectMake(cx + side * 0.05, cy - side * 0.48, side * 0.96, side * 0.96);
-        [[UIColor colorWithWhite:0.03 alpha:1] setFill];
-        CGContextFillEllipseInRect(c, disc);
-        [[UIColor colorWithWhite:1 alpha:0.07] setStroke];
-        for (CGFloat i = 0.2; i < 0.48; i += 0.03) CGContextStrokeEllipseInRect(c, CGRectInset(disc, side * i, side * i));
-        [MRGAccent() setFill];
-        CGContextFillEllipseInRect(c, CGRectInset(disc, side * 0.33, side * 0.33));
-        [[UIColor colorWithWhite:0.2 alpha:1] setFill];
-        UIBezierPath *sleeve = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(cx - side / 2, cy - side / 2, side, side) cornerRadius:10];
-        [sleeve fill];
-    }];
-}
-
 #pragma mark - a card
 
+// One card per add-on: its own picture, name, what it does, and one switch. The switch is the only control and its
+// label reads the stored state ("On" / "Off"), so the card can't say one thing while the add-on does another.
 @interface MRGAddonCard : UITableViewCell
 @property (nonatomic, copy) NSDictionary *addon;
-@property (nonatomic, copy) void (^onToggle)(void);
+@property (nonatomic, copy) void (^onToggle)(BOOL on);
+- (void)refreshState;
 @end
 
 @implementation MRGAddonCard {
     UIImageView *_art;
-    UILabel *_name, *_meta, *_desc;
-    UIButton *_button;
+    UILabel *_name, *_meta, *_desc, *_state, *_badge, *_chip;
+    UIView *_rule, *_dot;
+    UISwitch *_switch;
+}
+
+static UILabel *pill(UIFont *font) {
+    UILabel *l = [UILabel new];
+    l.font = font;
+    l.textAlignment = NSTextAlignmentCenter;
+    l.layer.cornerRadius = 11;
+    l.layer.cornerCurve = kCACornerCurveContinuous;
+    l.clipsToBounds = YES;
+    return l;
 }
 
 - (instancetype)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)rid {
     if (!(self = [super initWithStyle:style reuseIdentifier:rid])) return nil;
-    self.backgroundColor = [UIColor colorWithWhite:0.11 alpha:0.92];
+    self.backgroundColor = [UIColor colorWithWhite:0.10 alpha:0.94];
     self.selectionStyle = UITableViewCellSelectionStyleNone;
     _art = [UIImageView new];
     _art.contentMode = UIViewContentModeScaleAspectFill;
     _art.clipsToBounds = YES;
-    _art.layer.cornerRadius = 14;
+    _art.layer.cornerRadius = 16;
     _art.layer.cornerCurve = kCACornerCurveContinuous;
-    _art.backgroundColor = [UIColor colorWithWhite:0.07 alpha:1];
+    _art.backgroundColor = [UIColor colorWithWhite:0.06 alpha:1];
+    _chip = pill([UIFont systemFontOfSize:12 weight:UIFontWeightSemibold]);
+    _chip.textColor = UIColor.whiteColor;
+    _chip.backgroundColor = [UIColor colorWithWhite:0 alpha:0.45];
+    _badge = pill([UIFont systemFontOfSize:12 weight:UIFontWeightHeavy]);
     _name = [UILabel new];
-    _name.font = [UIFont systemFontOfSize:20 weight:UIFontWeightBold];
+    _name.font = [UIFont systemFontOfSize:21 weight:UIFontWeightBold];
     _name.textColor = UIColor.whiteColor;
+    _name.adjustsFontSizeToFitWidth = YES;
+    _name.minimumScaleFactor = 0.8;
     _meta = [UILabel new];
     _meta.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
-    _meta.textColor = [UIColor colorWithWhite:0.7 alpha:1];   // the accent can be dark (deep purple on black was unreadable)
+    _meta.textColor = [UIColor colorWithWhite:0.6 alpha:1];
     _desc = [UILabel new];
     _desc.font = [UIFont systemFontOfSize:15];
-    _desc.textColor = [UIColor colorWithWhite:0.80 alpha:1];
+    _desc.textColor = [UIColor colorWithWhite:0.82 alpha:1];
     _desc.numberOfLines = 0;
-    _button = [UIButton buttonWithType:UIButtonTypeSystem];
-    _button.titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightBold];
-    _button.layer.cornerRadius = 17;
-    _button.contentEdgeInsets = UIEdgeInsetsMake(7, 18, 7, 18);
-    [_button addTarget:self action:@selector(tapped) forControlEvents:UIControlEventTouchUpInside];
-    for (UIView *v in @[_art, _name, _meta, _desc, _button]) { v.translatesAutoresizingMaskIntoConstraints = NO; [self.contentView addSubview:v]; }
+    _rule = [UIView new];
+    _rule.backgroundColor = [UIColor colorWithWhite:1 alpha:0.08];
+    _dot = [UIView new];
+    _dot.layer.cornerRadius = 4;
+    _state = [UILabel new];
+    _state.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
+    _switch = [UISwitch new];
+    [_switch addTarget:self action:@selector(flipped) forControlEvents:UIControlEventValueChanged];
+    for (UIView *v in @[_art, _chip, _badge, _name, _meta, _desc, _rule, _dot, _state, _switch]) { v.translatesAutoresizingMaskIntoConstraints = NO; [self.contentView addSubview:v]; }
     UILayoutGuide *g = self.contentView.layoutMarginsGuide;
+    NSLayoutConstraint *bottom = [_switch.bottomAnchor constraintEqualToAnchor:self.contentView.bottomAnchor constant:-14];
+    bottom.priority = UILayoutPriorityRequired - 1;
     [NSLayoutConstraint activateConstraints:@[
         [_art.topAnchor constraintEqualToAnchor:self.contentView.topAnchor constant:14],
         [_art.leadingAnchor constraintEqualToAnchor:g.leadingAnchor],
         [_art.trailingAnchor constraintEqualToAnchor:g.trailingAnchor],
         [_art.heightAnchor constraintEqualToAnchor:_art.widthAnchor multiplier:9.0 / 16.0],
-        [_name.topAnchor constraintEqualToAnchor:_art.bottomAnchor constant:12],
+        [_chip.topAnchor constraintEqualToAnchor:_art.topAnchor constant:10],
+        [_chip.leadingAnchor constraintEqualToAnchor:_art.leadingAnchor constant:10],
+        [_chip.heightAnchor constraintEqualToConstant:22],
+        [_badge.topAnchor constraintEqualToAnchor:_art.topAnchor constant:10],
+        [_badge.trailingAnchor constraintEqualToAnchor:_art.trailingAnchor constant:-10],
+        [_badge.heightAnchor constraintEqualToConstant:22],
+        [_name.topAnchor constraintEqualToAnchor:_art.bottomAnchor constant:14],
         [_name.leadingAnchor constraintEqualToAnchor:g.leadingAnchor],
-        [_name.trailingAnchor constraintLessThanOrEqualToAnchor:_button.leadingAnchor constant:-8],
+        [_name.trailingAnchor constraintEqualToAnchor:g.trailingAnchor],
         [_meta.topAnchor constraintEqualToAnchor:_name.bottomAnchor constant:2],
         [_meta.leadingAnchor constraintEqualToAnchor:g.leadingAnchor],
-        [_meta.trailingAnchor constraintLessThanOrEqualToAnchor:_button.leadingAnchor constant:-8],
-        [_button.centerYAnchor constraintEqualToAnchor:_name.bottomAnchor],
-        [_button.trailingAnchor constraintEqualToAnchor:g.trailingAnchor],
-        [_desc.topAnchor constraintEqualToAnchor:_meta.bottomAnchor constant:8],
+        [_meta.trailingAnchor constraintEqualToAnchor:g.trailingAnchor],
+        [_desc.topAnchor constraintEqualToAnchor:_meta.bottomAnchor constant:10],
         [_desc.leadingAnchor constraintEqualToAnchor:g.leadingAnchor],
         [_desc.trailingAnchor constraintEqualToAnchor:g.trailingAnchor],
-        [_desc.bottomAnchor constraintEqualToAnchor:self.contentView.bottomAnchor constant:-16],
+        [_rule.topAnchor constraintEqualToAnchor:_desc.bottomAnchor constant:14],
+        [_rule.leadingAnchor constraintEqualToAnchor:g.leadingAnchor],
+        [_rule.trailingAnchor constraintEqualToAnchor:g.trailingAnchor],
+        [_rule.heightAnchor constraintEqualToConstant:1],
+        [_switch.topAnchor constraintEqualToAnchor:_rule.bottomAnchor constant:12],
+        [_switch.trailingAnchor constraintEqualToAnchor:g.trailingAnchor],
+        bottom,
+        [_dot.leadingAnchor constraintEqualToAnchor:g.leadingAnchor],
+        [_dot.centerYAnchor constraintEqualToAnchor:_switch.centerYAnchor],
+        [_dot.widthAnchor constraintEqualToConstant:8],
+        [_dot.heightAnchor constraintEqualToConstant:8],
+        [_state.leadingAnchor constraintEqualToAnchor:_dot.trailingAnchor constant:8],
+        [_state.centerYAnchor constraintEqualToAnchor:_switch.centerYAnchor],
+        [_state.trailingAnchor constraintLessThanOrEqualToAnchor:_switch.leadingAnchor constant:-8],
     ]];
-    [_button setContentCompressionResistancePriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
     return self;
 }
 
@@ -201,25 +222,50 @@ static UIImage *placeholderArt(CGSize size) {
     _addon = [a copy];
     _name.text = a[@"name"];
     NSMutableArray *meta = [NSMutableArray array];
-    if (a[@"type"]) [meta addObject:a[@"type"]];
     if (a[@"version"]) [meta addObject:[@"Version " stringByAppendingString:a[@"version"]]];
     if (a[@"author"]) [meta addObject:[@"by " stringByAppendingString:a[@"author"]]];
     _meta.text = [meta componentsJoinedByString:@"  ·  "];
     _desc.text = a[@"description"];
-    BOOL builtIn = MRGAddonBuiltIn(a[@"id"]) && versionAtLeast(@MRG_VERSION, a[@"min_mirage"]);
-    BOOL on = MRGAddonInstalled(a[@"id"]);
-    NSString *title = !builtIn ? @"Update Mirage" : on ? @"Remove" : @"Get";
-    [_button setTitle:title forState:UIControlStateNormal];
-    _button.enabled = builtIn;
-    _button.hidden = NO;
-    _button.backgroundColor = on ? [UIColor colorWithWhite:1 alpha:0.12] : builtIn ? MRGAccent() : [UIColor colorWithWhite:1 alpha:0.06];
-    [_button setTitleColor:on ? UIColor.whiteColor : builtIn ? MRGOnAccent() : UIColor.grayColor forState:UIControlStateNormal];
-    _art.image = placeholderArt(CGSizeMake(320, 180));
+    _chip.text = [a[@"type"] length] ? [NSString stringWithFormat:@"  %@  ", a[@"type"]] : nil;
+    _chip.hidden = !_chip.text.length;
     NSString *mine = a[@"id"];
-    loadPreview(a, ^(UIImage *img) { if (img && [self->_addon[@"id"] isEqualToString:mine]) self->_art.image = img; });
+    CGFloat w = MAX(300, self.contentView.bounds.size.width);
+    _art.image = MRGAddonArt(mine, CGSizeMake(w, round(w * 9 / 16)));
+    // A preview from the index is only used for add-ons this build doesn't draw itself.
+    if (!MRGAddonHasArt(mine))
+        loadPreview(a, ^(UIImage *img) { if (img && [self->_addon[@"id"] isEqualToString:mine]) self->_art.image = img; });
+    [self refreshState];
 }
 
-- (void)tapped { if (self.onToggle) self.onToggle(); }
+- (void)refreshState {
+    NSDictionary *a = _addon;
+    BOOL builtIn = MRGAddonBuiltIn(a[@"id"]) && versionAtLeast(@MRG_VERSION, a[@"min_mirage"]);
+    BOOL on = builtIn && MRGAddonInstalled(a[@"id"]);
+    UIColor *accent = MRGAccent();
+    if (_switch.on != on) [_switch setOn:on animated:self.window != nil];
+    _switch.enabled = builtIn;
+    _switch.onTintColor = accent;
+    _state.text = !builtIn ? [NSString stringWithFormat:@"Needs Mirage %@", a[@"min_mirage"] ?: @"update"] : on ? @"On" : @"Off";
+    _state.textColor = on ? UIColor.whiteColor : [UIColor colorWithWhite:0.55 alpha:1];
+    _dot.backgroundColor = on ? accent : [UIColor colorWithWhite:0.35 alpha:1];
+    _badge.hidden = !on;
+    _badge.text = @"  ON  ";
+    _badge.backgroundColor = accent;
+    _badge.textColor = MRGOnAccent();
+    self.accessibilityValue = _state.text;
+}
+
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    // Redrawn once the real width is known, so the picture is sharp on any phone.
+    if (_addon && _art.image && fabs(_art.image.size.width - _art.bounds.size.width) > 2 && _art.bounds.size.width > 100 && MRGAddonHasArt(_addon[@"id"]))
+        _art.image = MRGAddonArt(_addon[@"id"], _art.bounds.size);
+}
+
+- (void)flipped {
+    [[UISelectionFeedbackGenerator new] selectionChanged];
+    if (self.onToggle) self.onToggle(_switch.on);
+}
 @end
 
 #pragma mark - the shop
@@ -248,6 +294,7 @@ static BOOL addonHasSettings(NSDictionary *a) {
     UILabel *_titleLabel, *_subLabel;
     NSArray<NSDictionary *> *_addons;
     NSString *_note;
+    BOOL _changing, _reloadQueued;
 }
 
 - (instancetype)init { return [super initWithStyle:UITableViewStyleInsetGrouped]; }
@@ -258,9 +305,12 @@ static BOOL addonHasSettings(NSDictionary *a) {
     self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
     self.tableView.backgroundColor = UIColor.blackColor;
     self.tableView.separatorStyle = UITableViewCellSeparatorStyleNone;
-    self.tableView.estimatedRowHeight = 360;
+    self.tableView.estimatedRowHeight = 420;
     self.tableView.rowHeight = UITableViewAutomaticDimension;
-    UIEdgeInsets inset = self.tableView.contentInset; inset.bottom = 150; self.tableView.contentInset = inset;
+    self.tableView.sectionHeaderTopPadding = 6;
+    // Room for Spotify's mini player and tab bar, so the last card's switch is never under them.
+    UIEdgeInsets inset = self.tableView.contentInset; inset.bottom = 190; self.tableView.contentInset = inset;
+    UIEdgeInsets bar = self.tableView.verticalScrollIndicatorInsets; bar.bottom = 190; self.tableView.verticalScrollIndicatorInsets = bar;
     self.tableView.tableHeaderView = [self header];
     self.refreshControl = [UIRefreshControl new];
     self.refreshControl.tintColor = MRGAccent();
@@ -270,27 +320,44 @@ static BOOL addonHasSettings(NSDictionary *a) {
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(externalChange) name:MRGSettingsChangedNotification object:nil];
 }
 
+- (void)dealloc { [NSNotificationCenter.defaultCenter removeObserver:self]; }
+
+// Another page (or an add-on itself) changed something: one reload on the next turn, never in the middle of a switch.
 - (void)externalChange {
-    self->_addons = MRGAddonIndex();
-    [self.tableView reloadData];
+    if (_changing || _reloadQueued) return;
+    _reloadQueued = YES;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        self->_reloadQueued = NO;
+        if (self->_changing) return;
+        self->_addons = MRGAddonIndex();
+        [self updateCount];
+        [self.tableView reloadData];
+    });
 }
 
 - (UIView *)header {
     UIView *h = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 320, 100)];
     _titleLabel = [UILabel new];
     _titleLabel.text = @"Make Spotify yours";
-    _titleLabel.font = [UIFont systemFontOfSize:28 weight:UIFontWeightHeavy];
+    _titleLabel.font = [UIFont systemFontOfSize:30 weight:UIFontWeightHeavy];
     _titleLabel.textColor = UIColor.whiteColor;
     _titleLabel.adjustsFontSizeToFitWidth = YES;
     _titleLabel.minimumScaleFactor = 0.7;
     _subLabel = [UILabel new];
-    _subLabel.text = @"Add-ons are built into Mirage and switched on here. Nothing is downloaded or run from the internet.";
     _subLabel.numberOfLines = 0;
     _subLabel.font = [UIFont systemFontOfSize:14];
     _subLabel.textColor = [UIColor colorWithWhite:0.68 alpha:1];
     [h addSubview:_titleLabel];
     [h addSubview:_subLabel];
+    [self updateCount];
     return h;
+}
+
+- (void)updateCount {
+    NSUInteger on = 0, all = 0;
+    for (NSDictionary *a in _addons) { if (MRGAddonBuiltIn(a[@"id"])) all++; if (MRGAddonInstalled(a[@"id"])) on++; }
+    _subLabel.text = [NSString stringWithFormat:@"%lu of %lu add-ons on. Flip a switch and it works right away; your choices are saved automatically. Everything is built into Mirage, nothing is downloaded and run.", (unsigned long)on, (unsigned long)all];
+    [self.view setNeedsLayout];
 }
 
 // The header is sized to the table's width every layout, so its text wraps instead of running off the right edge.
@@ -301,10 +368,10 @@ static BOOL addonHasSettings(NSDictionary *a) {
     CGFloat w = self.tableView.bounds.size.width;
     UIEdgeInsets safe = self.tableView.safeAreaInsets;
     CGFloat x = 20 + safe.left, tw = MAX(100, w - x - 20 - safe.right);
-    _titleLabel.frame = CGRectMake(x, 12, tw, 34);
+    _titleLabel.frame = CGRectMake(x, 10, tw, 36);
     CGFloat sh = ceil([_subLabel sizeThatFits:CGSizeMake(tw, CGFLOAT_MAX)].height);
     _subLabel.frame = CGRectMake(x, 50, tw, sh);
-    CGRect f = CGRectMake(0, 0, w, 50 + sh + 14);
+    CGRect f = CGRectMake(0, 0, w, 50 + sh + 10);
     if (!CGRectEqualToRect(h.frame, f)) { h.frame = f; self.tableView.tableHeaderView = h; }
 }
 
@@ -313,6 +380,7 @@ static BOOL addonHasSettings(NSDictionary *a) {
         self->_addons = addons;
         self->_note = error;
         [self.refreshControl endRefreshing];
+        [self updateCount];
         [self.tableView reloadData];
     });
 }
@@ -330,12 +398,13 @@ static BOOL addonHasSettings(NSDictionary *a) {
         if (s < [self leadingSections]) return MRGShopHeaderRows();
         NSDictionary *a = [self addonInSection:s];
         if (!a) return 0;
-        // The card, an on/off row, and a Settings row while it's on and has a schema.
-        return 2 + (addonHasSettings(a) ? 1 : 0);
+        // The card (with its one switch), and a Settings row while it's on and has settings.
+        return 1 + (addonHasSettings(a) ? 1 : 0);
     });
 }
 - (NSString *)tableView:(UITableView *)t titleForHeaderInSection:(NSInteger)s {
     if (s < [self leadingSections]) return MRGShopHeaderTitle();
+    if (s == [self leadingSections]) return @"Add-ons";
     return nil;
 }
 - (NSString *)tableView:(UITableView *)t titleForFooterInSection:(NSInteger)s {
@@ -354,62 +423,66 @@ static BOOL addonHasSettings(NSDictionary *a) {
         if (ip.section < [self leadingSections]) return MRGShopHeaderCell(t, ip.row);
         NSDictionary *a = [self addonInSection:ip.section];
         if (ip.row == 1) {
-            UITableViewCell *c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
-            c.backgroundColor = [UIColor colorWithWhite:0.11 alpha:0.92];
-            c.textLabel.text = @"On";
-            c.textLabel.textColor = UIColor.whiteColor;
-            c.selectionStyle = UITableViewCellSelectionStyleNone;
-            BOOL builtIn = MRGAddonBuiltIn(a[@"id"]) && versionAtLeast(@MRG_VERSION, a[@"min_mirage"]);
-            UISwitch *sw = [UISwitch new];
-            sw.on = MRGAddonInstalled(a[@"id"]);
-            sw.enabled = builtIn;
-            sw.onTintColor = MRGAccent();
-            [sw addTarget:self action:@selector(switched:) forControlEvents:UIControlEventValueChanged];
-            sw.tag = ip.section;
-            c.accessoryView = sw;
-            return c;
-        }
-        if (ip.row == 2) {
             UITableViewCell *c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:nil];
-            c.backgroundColor = [UIColor colorWithWhite:0.11 alpha:0.92];
+            c.backgroundColor = [UIColor colorWithWhite:0.10 alpha:0.94];
             c.textLabel.text = @"Settings";
             c.textLabel.textColor = UIColor.whiteColor;
+            c.textLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightMedium];
             c.imageView.image = [UIImage systemImageNamed:@"slider.horizontal.3"];
             c.imageView.tintColor = MRGAccent();
             c.detailTextLabel.text = addonSummary(a);
+            c.detailTextLabel.textColor = [UIColor colorWithWhite:0.55 alpha:1];
             c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
             return c;
         }
         MRGAddonCard *card = [[MRGAddonCard alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
         card.addon = a;
+        NSString *addonID = a[@"id"];
         __weak typeof(self) weak = self;
-        card.onToggle = ^{
-            BOOL on = !MRGAddonInstalled(a[@"id"]);
-            MRGAddonSetInstalled(a[@"id"], on);
-            [weak.tableView reloadSections:[NSIndexSet indexSetWithIndex:ip.section] withRowAnimation:UITableViewRowAnimationAutomatic];
-        };
+        __weak MRGAddonCard *weakCard = card;
+        card.onToggle = ^(BOOL on) { [weak setAddon:addonID on:on card:weakCard]; };
         return card;
     });
 }
 
-- (void)switched:(UISwitch *)sw {
-    NSDictionary *a = [self addonInSection:sw.tag];
-    if (!a) return;
-    MRGAddonSetInstalled(a[@"id"], sw.on);
-    [self.tableView reloadSections:[NSIndexSet indexSetWithIndex:sw.tag] withRowAnimation:UITableViewRowAnimationNone];
+- (void)setAddon:(NSString *)addonID on:(BOOL)on card:(MRGAddonCard *)card {
+    if (!addonID.length) return;
+    _changing = YES;
+    @try { MRGAddonSetInstalled(addonID, on); } @catch (NSException *e) { MRGDJLog(@"addons: switching %@ threw %@", addonID, e.reason); }
+    _changing = NO;
+    [card refreshState];
+    [self updateCount];
+    NSInteger section = NSNotFound;
+    for (NSInteger i = 0; i < (NSInteger)_addons.count; i++) if ([_addons[i][@"id"] isEqualToString:addonID]) section = i + [self leadingSections];
+    if (section == NSNotFound || section >= self.tableView.numberOfSections) { [self.tableView reloadData]; return; }
+    // Only the Settings row comes and goes; the card stays, so the switch finishes its own animation.
+    NSInteger have = [self.tableView numberOfRowsInSection:section];
+    NSInteger want = [self tableView:self.tableView numberOfRowsInSection:section];
+    NSArray *settings = @[[NSIndexPath indexPathForRow:1 inSection:section]];
+    @try {
+        [self.tableView performBatchUpdates:^{
+            if (want > have) [self.tableView insertRowsAtIndexPaths:settings withRowAnimation:UITableViewRowAnimationFade];
+            else if (want < have) [self.tableView deleteRowsAtIndexPaths:settings withRowAnimation:UITableViewRowAnimationFade];
+            if (want == have && want > 1) [self.tableView reloadRowsAtIndexPaths:settings withRowAnimation:UITableViewRowAnimationNone];
+        } completion:^(BOOL finished) {
+            [UIView performWithoutAnimation:^{ [self.tableView reloadSections:[NSIndexSet indexSetWithIndex:section] withRowAnimation:UITableViewRowAnimationNone]; }];
+        }];
+    } @catch (NSException *e) {
+        [self.tableView reloadData];
+    }
 }
 
 - (void)tableView:(UITableView *)t didSelectRowAtIndexPath:(NSIndexPath *)ip {
     [t deselectRowAtIndexPath:ip animated:YES];
     if (ip.section < [self leadingSections]) { MRGShopHeaderSelect(self, ip.row); return; }
-    if (ip.row == 2) {
+    if (ip.row == 1) {
         id<MRGAddon> addon = MRGAddonObject([self addonInSection:ip.section][@"id"]);
         UIViewController *page = [addon respondsToSelector:@selector(addonSettingsController)] ? [addon addonSettingsController] : nil;
         MRGPushPage(self, page ?: MRGAddonSettingsPage(addon.addonID));
     }
 }
 
-- (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; [self.tableView reloadData]; }
+- (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; _addons = MRGAddonIndex(); [self updateCount]; [self.tableView reloadData]; }
 @end
 
 UIViewController *MRGAddonShopPage(void) { return [MRGAddonShop new]; }
