@@ -37,9 +37,20 @@ static NSArray<NSString *> *aboutRows(void) {
 }
 
 // The built-in add-ons in the shop's order: the rows of the main page's Add-ons section.
+// The main page lists the add-ons that are installed (on), nothing else: the rest live in the Add-on Shop. The list
+// is taken when the page appears, so one switched off here stays (greyed, settings closed) until the page is
+// opened again and can be switched straight back on.
+static NSArray<NSString *> *sShownAddonIDs;
+static void refreshShownAddons(void) {
+    NSMutableArray *ids = [NSMutableArray array];
+    for (NSDictionary *a in MRGAddonIndex())
+        if ([a[@"id"] isKindOfClass:NSString.class] && MRGAddonBuiltIn(a[@"id"]) && MRGAddonInstalled(a[@"id"])) [ids addObject:a[@"id"]];
+    sShownAddonIDs = ids;
+}
 static NSArray<NSDictionary *> *mainAddons(void) {
+    if (!sShownAddonIDs) refreshShownAddons();
     NSMutableArray *out = [NSMutableArray array];
-    for (NSDictionary *a in MRGAddonIndex()) if ([a[@"id"] isKindOfClass:NSString.class] && MRGAddonBuiltIn(a[@"id"])) [out addObject:a];
+    for (NSDictionary *a in MRGAddonIndex()) if ([a[@"id"] isKindOfClass:NSString.class] && [sShownAddonIDs containsObject:a[@"id"]] && MRGAddonBuiltIn(a[@"id"])) [out addObject:a];
     return out;
 }
 
@@ -94,7 +105,7 @@ static NSArray<NSDictionary *> *mainAddons(void) {
     _detail.textColor = on ? [MRGAccent() colorWithAlphaComponent:0.95] : [UIColor colorWithWhite:1 alpha:0.45];
     _toggle.on = on;
     _toggle.onTintColor = MRGAccent();
-    BOOL settings = MRGAddonHasSettings(self.addonID);
+    BOOL settings = on && MRGAddonHasSettings(self.addonID);
     _chevron.hidden = !settings;
     self.selectionStyle = settings ? UITableViewCellSelectionStyleDefault : UITableViewCellSelectionStyleNone;
     self.accessibilityLabel = _name.text;
@@ -212,7 +223,7 @@ static const CGFloat kBottomChrome = 150;
         return 0;
     }
     switch (s) {
-        case MRGSecAddons: return (NSInteger)mainAddons().count;
+        case MRGSecAddons: return MAX((NSInteger)mainAddons().count, 1);   // 1: the "none on" row
         case MRGSecBackgrounds: return 1;
         case MRGSecShop: return 1;
         case MRGSecDJ: return 1;
@@ -253,7 +264,7 @@ static const CGFloat kBottomChrome = 150;
         return nil;
     }
     switch (s) {
-        case MRGSecAddons: return @"Turn any add-on on or off right here; the arrow opens its settings. Previews and descriptions are in the Add-on Shop.";
+        case MRGSecAddons: return @"The add-ons you have on. Switch one off here or open its settings with the arrow; get more in the Add-on Shop.";
         case MRGSecBackgrounds: return @"Pictures, video and where they show live on the Backgrounds page. What you already set is kept.";
         case MRGSecSaver: return @"Every change saves itself right away. Here you can export or import all Mirage settings, or keep named presets on this iPhone. API keys are never included.";
         case MRGSecDJ:
@@ -268,7 +279,7 @@ static const CGFloat kBottomChrome = 150;
 
 - (CGFloat)tableView:(UITableView *)t heightForRowAtIndexPath:(NSIndexPath *)ip {
     if (self.djOnly) return 48;
-    if (!self.bgOnly && ip.section == MRGSecAddons) return 64;
+    if (!self.bgOnly && ip.section == MRGSecAddons) return mainAddons().count ? 64 : 48;
     if (self.bgOnly && ip.section == MRGBgPreview && ip.row == 1) return MRGCurrentKind() == MRGMediaNone ? 52 : 200;
     if (self.bgOnly && ip.section == MRGBgLook && ip.row < 2) return 64;
     return 48;
@@ -441,7 +452,12 @@ static UITableViewCell *baseCell(void) {
 
 static NSString *ip3(NSInteger row) { return row == 3 ? @"Voice" : row == 4 ? @"Vibe" : @"Listening history"; }
 
-- (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; [self.tableView reloadData]; [self updateHero]; }
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    if (!self.djOnly && !self.bgOnly) refreshShownAddons();
+    [self.tableView reloadData];
+    [self updateHero];
+}
 
 // The main page's header: the name, the version, and how many add-ons are on.
 - (void)updateHero {
@@ -705,6 +721,13 @@ static NSString *ip3(NSInteger row) { return row == 3 ? @"Voice" : row == 4 ? @"
     switch (ip.section) {
         case MRGSecAddons: {
             NSArray *list = mainAddons();
+            if (!list.count) {
+                UITableViewCell *c = [self actionCell:@"No add-ons on yet" symbol:@"puzzlepiece.extension" destructive:NO enabled:YES];
+                c.detailTextLabel.text = @"Add-on Shop";
+                c.detailTextLabel.textColor = UIColor.grayColor;
+                c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+                return c;
+            }
             MRGAddonRowCell *c = [t dequeueReusableCellWithIdentifier:@"mirage.addonrow"] ?: [[MRGAddonRowCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"mirage.addonrow"];
             if (ip.row >= (NSInteger)list.count) return baseCell();
             [c fill:list[ip.row]];
@@ -811,7 +834,10 @@ static NSString *ip3(NSInteger row) { return row == 3 ? @"Voice" : row == 4 ? @"
     }
     if (ip.section == MRGSecAddons) {
         NSArray *list = mainAddons();
-        if (ip.row < (NSInteger)list.count && MRGAddonHasSettings(list[ip.row][@"id"])) MRGPushPage(self, MRGAddonSettingsFor(list[ip.row][@"id"]));
+        if (!list.count) { MRGPushPage(self, MRGAddonShopPage()); return; }
+        if (ip.row >= (NSInteger)list.count) return;
+        UIViewController *page = MRGAddonSettingsFor(list[ip.row][@"id"]);   // nil while the add-on is off
+        if (page) MRGPushPage(self, page);
         return;
     }
     if (ip.section == MRGSecAbout) {

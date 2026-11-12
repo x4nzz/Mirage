@@ -499,9 +499,8 @@ static BOOL addonHasSettings(NSDictionary *a) {
     [t deselectRowAtIndexPath:ip animated:YES];
     if (ip.section < [self leadingSections]) { MRGShopHeaderSelect(self, ip.row); return; }
     if (ip.row == 1) {
-        id<MRGAddon> addon = MRGAddonObject([self addonInSection:ip.section][@"id"]);
-        UIViewController *page = [addon respondsToSelector:@selector(addonSettingsController)] ? [addon addonSettingsController] : nil;
-        MRGPushPage(self, page ?: MRGAddonSettingsPage(addon.addonID));
+        UIViewController *page = MRGAddonSettingsFor([self addonInSection:ip.section][@"id"]);   // nil once it's off
+        if (page) MRGPushPage(self, page);
     }
 }
 
@@ -511,13 +510,14 @@ static BOOL addonHasSettings(NSDictionary *a) {
 UIViewController *MRGAddonShopPage(void) { return [MRGAddonShop new]; }
 
 NSString *MRGAddonRowSummary(NSString *addonID) { return addonID.length ? addonSummary(@{@"id": addonID}) : nil; }
+// Settings exist only for an add-on that is installed (on): nothing of an add-on that isn't shows anywhere.
 BOOL MRGAddonHasSettings(NSString *addonID) {
     id<MRGAddon> addon = MRGAddonObject(addonID);
-    return addon && ([addon addonSettings].count > 0 || [addon respondsToSelector:@selector(addonSettingsController)]);
+    return addon && MRGAddonInstalled(addonID) && ([addon addonSettings].count > 0 || [addon respondsToSelector:@selector(addonSettingsController)]);
 }
 UIViewController *MRGAddonSettingsFor(NSString *addonID) {
     id<MRGAddon> addon = MRGAddonObject(addonID);
-    if (!addon) return nil;
+    if (!addon || !MRGAddonInstalled(addonID)) return nil;
     UIViewController *page = nil;
     @try { page = [addon respondsToSelector:@selector(addonSettingsController)] ? [addon addonSettingsController] : nil; } @catch (NSException *e) {}
     return page ?: MRGAddonSettingsPage(addon.addonID);
