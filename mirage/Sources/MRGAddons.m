@@ -266,6 +266,12 @@ static BOOL addonHasSettings(NSDictionary *a) {
     [self.refreshControl addTarget:self action:@selector(reload) forControlEvents:UIControlEventValueChanged];
     _addons = MRGAddonIndex();
     [self reload];
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(externalChange) name:MRGSettingsChangedNotification object:nil];
+}
+
+- (void)externalChange {
+    self->_addons = MRGAddonIndex();
+    [self.tableView reloadData];
 }
 
 - (UIView *)header {

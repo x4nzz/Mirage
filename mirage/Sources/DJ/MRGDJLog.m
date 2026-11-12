@@ -1,4 +1,6 @@
 #import "MRGDJLog.h"
+#import "Addons/MRGAddon.h"
+#import "Addons/MRGThemes.h"
 #import <objc/runtime.h>
 
 static NSMutableArray<NSString *> *sLines;
@@ -53,6 +55,8 @@ void MRGDJLogClear(void) { load(); [sLines removeAllObjects]; save(); }
 #pragma mark - accent
 
 UIColor *MRGAccent(void) {
+    NSInteger live = MRGLookLiveRGB();
+    if (live >= 0 && live <= 0xFFFFFF) return MRGColorFromRGB(live);
     NSUserDefaults *d = NSUserDefaults.standardUserDefaults;
     BOOL redesign = [d boolForKey:@"spotifyglass.redesign"];
     if (@available(iOS 26.0, *)) {} else redesign = redesign && [d boolForKey:@"spotifyglass.redesign.untested"];

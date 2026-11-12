@@ -14,8 +14,16 @@ static NSString *(^sHeaderFooter)(void);
 static NSUserDefaults *D(void) { return NSUserDefaults.standardUserDefaults; }
 
 UIColor *MRGColorFromRGB(NSInteger rgb) {
+    // colorWithCGColor, not colorWithRed: Vitrine and the theme hook both sit on colorWithRed, and a color
+    // built here must be the exact RGB we asked for.
     rgb &= 0xFFFFFF;
-    return [UIColor colorWithRed:((rgb >> 16) & 0xFF) / 255.0 green:((rgb >> 8) & 0xFF) / 255.0 blue:(rgb & 0xFF) / 255.0 alpha:1];
+    CGFloat c[4] = {((rgb >> 16) & 0xFF) / 255.0, ((rgb >> 8) & 0xFF) / 255.0, (rgb & 0xFF) / 255.0, 1};
+    CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+    CGColorRef cg = CGColorCreate(space, c);
+    UIColor *color = [UIColor colorWithCGColor:cg];
+    CGColorRelease(cg);
+    CGColorSpaceRelease(space);
+    return color;
 }
 
 NSInteger MRGRGBFromColor(UIColor *color) {

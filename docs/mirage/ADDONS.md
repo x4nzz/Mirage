@@ -99,9 +99,15 @@ row that pushes the schema page. A custom page is a normal `UIViewController`; p
 ## Themes
 
 Themes are JSON only: colors, an accent, a glass tint, and an optional background reference. Nothing in a
-theme is code, from this repo or from anywhere else. The catalog ships in the app
-(`addons/themes/catalog.json`). A remote index can be turned off in the marketplace; with it off, or when
-it can't be reached, the bundled catalog is what you see.
+theme is code, from this repo or from anywhere else. The catalog that ships in the app is
+[`addons/themes/catalog.json`](../../addons/themes/catalog.json) (ten themes). The marketplace is the first
+section of the shop: tap a theme to preview it, apply it, or remove it. A theme's `dynamicColors` flag says
+whether the dynamic colors add-on may replace its accent.
+
+The shop can also fetch `https://raw.githubusercontent.com/x4nzz/Mirage/main/addons/themes/catalog.json`.
+Every theme in that file is checked (only the known keys, colors as `#RRGGBB`, no paths) and a theme that
+doesn't pass is dropped. **Download theme list** turns the fetch off. Off, or a fetch that fails, shows the
+bundled catalog and says so.
 
 ## Vinyl (Now Playing)
 

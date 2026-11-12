@@ -1,0 +1,98 @@
+{
+  "format": 1,
+  "themes": [
+    {
+      "id": "midnight",
+      "name": "Midnight",
+      "description": "Indigo on black, the late-night default.",
+      "accent": "#6E7CFF",
+      "glassTint": "#16182A",
+      "colors": { "background": "#000000", "text": "#F4F5FF", "secondary": "#9AA0C3" },
+      "dynamicColors": true
+    },
+    {
+      "id": "vinyl",
+      "name": "Vinyl",
+      "description": "Warm amber, like a lamp on a record sleeve. The accent stays put when dynamic colors are on.",
+      "accent": "#E8A54B",
+      "glassTint": "#24180C",
+      "colors": { "background": "#120C06", "text": "#FFF6E8", "secondary": "#C4A27A" },
+      "background": "#1A1008",
+      "dynamicColors": false
+    },
+    {
+      "id": "forest",
+      "name": "Forest",
+      "description": "A deep green that can follow the cover.",
+      "accent": "#3DDC84",
+      "glassTint": "#0E1C14",
+      "colors": { "background": "#06110C", "text": "#E9FFF3", "secondary": "#8FB9A0" },
+      "dynamicColors": true
+    },
+    {
+      "id": "ocean",
+      "name": "Ocean",
+      "description": "Cool blue over a dark sea.",
+      "accent": "#4CC3FF",
+      "glassTint": "#0A1C28",
+      "colors": { "background": "#061018", "text": "#E7F7FF", "secondary": "#8FB4C9" },
+      "background": "#071820",
+      "dynamicColors": true
+    },
+    {
+      "id": "rose",
+      "name": "Rose",
+      "description": "Pink that stays pink. Dynamic colors will not override it.",
+      "accent": "#FF6B9A",
+      "glassTint": "#2A121C",
+      "colors": { "background": "#14080E", "text": "#FFE8F0", "secondary": "#D4A3B4" },
+      "dynamicColors": false
+    },
+    {
+      "id": "amoled",
+      "name": "AMOLED",
+      "description": "Pure black and Spotify green.",
+      "accent": "#1ED760",
+      "glassTint": "#000000",
+      "colors": { "background": "#000000", "text": "#FFFFFF", "secondary": "#8E8E93" },
+      "dynamicColors": true
+    },
+    {
+      "id": "dusk",
+      "name": "Dusk",
+      "description": "Purple glass at the end of the day.",
+      "accent": "#C084FC",
+      "glassTint": "#1A1024",
+      "colors": { "background": "#100818", "text": "#F6EEFF", "secondary": "#B9A3CC" },
+      "dynamicColors": true
+    },
+    {
+      "id": "paper",
+      "name": "Paper",
+      "description": "Warm paper in a dark room. The cream accent is fixed.",
+      "accent": "#F2E2C4",
+      "glassTint": "#2A2218",
+      "colors": { "background": "#1C1612", "text": "#FFF8EE", "secondary": "#CDBBA6" },
+      "background": "#221C16",
+      "dynamicColors": false
+    },
+    {
+      "id": "cherry",
+      "name": "Cherry",
+      "description": "A red accent that dynamic colors leave alone.",
+      "accent": "#FF453A",
+      "glassTint": "#2A1012",
+      "colors": { "background": "#16080A", "text": "#FFECEA", "secondary": "#D4A09C" },
+      "dynamicColors": false
+    },
+    {
+      "id": "ice",
+      "name": "Ice",
+      "description": "Pale cyan that can still follow the cover.",
+      "accent": "#9BE7FF",
+      "glassTint": "#101820",
+      "colors": { "background": "#0C1216", "text": "#F2FBFF", "secondary": "#A9C4CE" },
+      "dynamicColors": true
+    }
+  ]
+}

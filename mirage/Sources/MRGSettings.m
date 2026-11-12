@@ -158,7 +158,7 @@ static UITableViewCell *baseCell(void) {
     UISwitch *sw = [UISwitch new];
     sw.on = on;
     sw.tag = tag;
-    sw.onTintColor = [UIColor colorWithRed:0.12 green:0.84 blue:0.38 alpha:1];
+    sw.onTintColor = MRGAccent();
     [sw addTarget:self action:@selector(switched:) forControlEvents:UIControlEventValueChanged];
     c.accessoryView = sw;
     return c;
