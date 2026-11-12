@@ -109,6 +109,20 @@ Every theme in that file is checked (only the known keys, colors as `#RRGGBB`, n
 doesn't pass is dropped. **Download theme list** turns the fetch off. Off, or a fetch that fails, shows the
 bundled catalog and says so.
 
+## Shipped in 0.6.0
+
+| Id | What |
+|---|---|
+| `vinyl` | Now Playing record. Spin speed and side, same keys as before. |
+| `dynamic-colors` | Cover color on the accent, toggles, and Vitrine's glass. |
+| `shuffle-plus` | Playlist and album shuffle through Spotify's queue. |
+| `trash` | Skip trashed songs, including in the AI DJ. |
+| `popup-lyrics` | Synced lyrics at the top of Home, from Vitrine's lyrics. |
+| `genres` | Genres on Now Playing. |
+| `playlist-tools` | Sort, duplicates, shuffled copy. |
+
+Themes are not add-ons. They are the marketplace at the top of the shop.
+
 ## Vinyl (Now Playing)
 
 The cover shrinks and moves to one side, and a record peeks out from behind it. The record spins while a

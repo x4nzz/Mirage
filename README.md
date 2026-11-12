@@ -6,7 +6,8 @@ Vitrine's own:
 
 - **Custom backgrounds**: a picture (PNG/JPG/HEIC), a GIF (converted to a looping MP4) or a video
   (MP4/MOV, muted, without touching Spotify's audio session), with blur, dim, scale mode and a choice of
-  Home / Now Playing / Library / Everywhere. It sits behind Vitrine's liquid glass.
+  Home / Now Playing / Library / Everywhere. Since 0.6.0 these live on their own Backgrounds page, several
+  can be saved, and each of those screens can use a different one. It sits behind Vitrine's liquid glass.
 - A **Mirage** row in the side drawer, right below Vitrine's *Mod Settings*, that opens Mirage's settings.
 - **Mirage DJ** (0.2.0): an AI DJ that uses your own API key (OpenAI, Gemini, Anthropic, OpenRouter, Groq, xAI, Perplexity,
   Cerebras, Fireworks, Together, DeepSeek, Mistral) to pick sets from your taste and talk between tracks. Since 0.3.0: voices
@@ -16,7 +17,11 @@ Vitrine's own:
   on every new request, and voice presets with fine controls. Since 0.4.2: the set is checked against Spotify's real queue and
   repaired, picks stay near your seeds, the vibe box answers questions, artist/song info cards with sources, two new voice presets. 0.4.3: the queue crash on tapping a song is fixed, Start follows the song playing now, ElevenLabs Ivy / Nicole / Arabella presets. 0.4.4: those presets really speak with ElevenLabs, and ElevenLabs errors are shown instead of the iPhone voice. 0.5.0: "play <song> by <artist>" plays that song first and then similar music, playlist/album requests, no more overlapping sets or voices, free Microsoft Edge voices (unofficial) as the default plus Qwen TTS with your own key, a backup AI key for rate limits, and the Addon Shop with its first addon, Vinyl. 0.5.1: the free voices really speak now (and are what every preset uses), Qwen is gone, Vinyl stays on, and the DJ bar on Now Playing no longer covers the cover, lyrics or title. 0.5.2: the Vinyl crash is fixed and the record now moves with the cover, the DJ stops making up facts, the Now Playing background and DJ bar move with the player when you pull it down, and the Add-on Shop is cleaned up. 0.5.3: Vinyl is bigger, the cover and record now fill the Now Playing art row. 0.5.4: Vinyl is really bigger (about a 305pt cover on a 390pt iPhone, the record peeking 20%), the record no longer gets left behind when you pull the player down, and builds are named with the Mirage version.
   See [docs/mirage/AI-DJ.md](docs/mirage/AI-DJ.md).
-- Coming next: an **Addon Shop**.
+- **Add-on Shop** (0.5.0, rebuilt in 0.6.0): add-ons are features that ship inside Mirage. The shop turns them on,
+  shows each one's settings, and puts a theme marketplace at the top. Themes are JSON only (colors, accent, glass
+  tint, optional background). 0.6.0 also adds dynamic colors from the cover, Shuffle+, a trash bin, pop-up lyrics
+  on Home, genres on Now Playing, playlist tools, and save/load of settings (no API keys). See
+  [docs/mirage/ADDONS.md](docs/mirage/ADDONS.md) and [CHANGELOG.md](CHANGELOG.md).
 
 Vitrine's sources (`tweak/`) are kept as upstream ships them, so `git merge upstream/main` stays clean.
 
