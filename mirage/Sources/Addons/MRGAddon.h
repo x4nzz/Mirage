@@ -24,6 +24,7 @@ typedef NS_ENUM(NSInteger, MRGAddonControl) {
 @property (nonatomic) double maximum;
 @property (nonatomic, copy) NSArray<NSString *> *options;
 @property (nonatomic, copy) NSArray *values;        // picker: one stored value per option
+@property (nonatomic) BOOL live;                    // slider: saves while dragging (the change shows as you slide)
 + (instancetype)toggle:(NSString *)key title:(NSString *)title fallback:(BOOL)on;
 + (instancetype)slider:(NSString *)key title:(NSString *)title min:(double)min max:(double)max fallback:(double)v;
 + (instancetype)picker:(NSString *)key title:(NSString *)title options:(NSArray<NSString *> *)options values:(NSArray *)values fallback:(id)fallback;

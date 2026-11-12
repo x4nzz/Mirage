@@ -268,7 +268,7 @@ static NSInteger pickerIndex(MRGAddonSetting *setting, id value) {
             slider.maximumValue = setting.maximum;
             slider.value = MIN(setting.maximum, MAX(setting.minimum, [value doubleValue]));
             slider.tag = ip.section;
-            slider.continuous = NO;
+            slider.continuous = setting.live;
             slider.minimumTrackTintColor = MRGAccent();
             [slider addTarget:self action:@selector(slid:) forControlEvents:UIControlEventValueChanged];
             UIStackView *stack = [[UIStackView alloc] initWithArrangedSubviews:@[label, slider]];

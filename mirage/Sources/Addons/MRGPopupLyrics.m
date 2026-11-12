@@ -47,6 +47,11 @@ static void resolveSymbols(void) {
 }
 
 static CGFloat fontSize(void) { return MIN(30, MAX(18, MRGAddonNumber(kAddon, @"size", 24))); }
+// Glass clarity: 0 is almost clear (the background shows straight through), 1 is fully frosted. Tint is how much
+// of the accent washes over it. Both apply live.
+static CGFloat frost(void) { return MIN(1, MAX(0, MRGAddonNumber(kAddon, @"frost", 0.3))); }
+static CGFloat tintAmount(void) { return MIN(0.5, MAX(0, MRGAddonNumber(kAddon, @"tint", 0.10))); }
+
 static NSInteger linesShown(void) { return MIN(5, MAX(3, MRGAddonInteger(kAddon, @"lines", 4))); }
 static BOOL lowPower(void) { return NSProcessInfo.processInfo.isLowPowerModeEnabled; }
 
@@ -120,14 +125,15 @@ static BOOL openPlayer(UIView *from) {
 // The card's material. Vitrine's own glass when it is loaded (the same effect its redesign uses, so the card matches
 // the rest of the app), else UIGlassEffect on iOS 26, else an ultra-thin dark material blur. `liquid` says whether
 // the result is real glass (it shapes itself with a corner configuration and needs no border).
-static UIVisualEffect *glassEffect(BOOL *liquid) {
+static UIVisualEffect *glassEffect(BOOL *liquid, BOOL clear) {
     Class glass = NSClassFromString(@"UIGlassEffect");
     BOOL haveGlass = [glass respondsToSelector:@selector(effectWithStyle:)];
     UIVisualEffect *(*vitrine)(void) = (UIVisualEffect *(*)(void))dlsym(RTLD_DEFAULT, "SGGlassEffect");
     UIVisualEffect *e = nil;
-    if (vitrine && haveGlass) { @try { e = vitrine(); } @catch (NSException *x) {} }
+    // Clear glass (UIGlassEffectStyleClear, 1) for the clearer half of the slider; Vitrine's regular glass otherwise.
+    if (vitrine && haveGlass && !clear) { @try { e = vitrine(); } @catch (NSException *x) {} }
     if (![e isKindOfClass:UIVisualEffect.class] && haveGlass) {
-        @try { e = ((id (*)(id, SEL, NSInteger))objc_msgSend)(glass, @selector(effectWithStyle:), 0); } @catch (NSException *x) { e = nil; }
+        @try { e = ((id (*)(id, SEL, NSInteger))objc_msgSend)(glass, @selector(effectWithStyle:), clear ? 1 : 0); } @catch (NSException *x) { e = nil; }
     }
     if ([e isKindOfClass:UIVisualEffect.class] && glass && [e isKindOfClass:glass]) {
         if (liquid) *liquid = YES;
@@ -151,9 +157,18 @@ static void shapeGlass(UIVisualEffectView *v, CGFloat radius) {
     v.layer.cornerRadius = radius;
 }
 
+// A soft shadow keeps white text readable over a clear card on a bright background.
+static void shadowText(UILabel *l) {
+    l.layer.shadowColor = UIColor.blackColor.CGColor;
+    l.layer.shadowOpacity = 0.45;
+    l.layer.shadowRadius = 3;
+    l.layer.shadowOffset = CGSizeMake(0, 1);
+}
+
 @implementation MRGLyricsShelf {
     UIVisualEffectView *_glass;
     BOOL _liquid;          // UIGlassEffect (iOS 26), else a thin material blur
+    BOOL _clearGlass;      // the clear glass style is in use
     CAGradientLayer *_tint, *_fade;
     UIImageView *_icon;
     UILabel *_kicker, *_song;
@@ -178,7 +193,8 @@ static void shapeGlass(UIVisualEffectView *v, CGFloat radius) {
     // darkens what the glass shows) and no fill, only the faintest accent wash.
     self.backgroundColor = UIColor.clearColor;
     _liquid = NO;
-    _glass = [[UIVisualEffectView alloc] initWithEffect:glassEffect(&_liquid)];
+    _clearGlass = frost() < 0.5;
+    _glass = [[UIVisualEffectView alloc] initWithEffect:glassEffect(&_liquid, _clearGlass)];
     _glass.layer.cornerCurve = kCACornerCurveContinuous;
     shapeGlass(_glass, 22);
     if (!_liquid) {
@@ -201,9 +217,11 @@ static void shapeGlass(UIVisualEffectView *v, CGFloat radius) {
     _kicker.text = @"LYRICS";
     _kicker.font = [UIFont systemFontOfSize:12 weight:UIFontWeightHeavy];
     _kicker.textColor = UIColor.whiteColor;
+    shadowText(_kicker);
     _song = [UILabel new];
     _song.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
-    _song.textColor = [UIColor colorWithWhite:1 alpha:0.6];
+    _song.textColor = [UIColor colorWithWhite:1 alpha:0.75];
+    shadowText(_song);
     _open = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"arrow.up.left.and.arrow.down.right" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:13 weight:UIImageSymbolWeightSemibold]]];
     _open.tintColor = [UIColor colorWithWhite:1 alpha:0.55];
     _open.contentMode = UIViewContentModeCenter;
@@ -249,8 +267,8 @@ static void shapeGlass(UIVisualEffectView *v, CGFloat radius) {
     UIColor *accent = MRGAccent();
     _tint.frame = b;
     // A wash, not a fill: the glass itself carries the material.
-    CGFloat top = _liquid ? 0.14 : 0.18;
-    _tint.colors = @[(id)[accent colorWithAlphaComponent:top].CGColor, (id)[accent colorWithAlphaComponent:0.03].CGColor, (id)UIColor.clearColor.CGColor];
+    CGFloat top = tintAmount();
+    _tint.colors = @[(id)[accent colorWithAlphaComponent:top].CGColor, (id)[accent colorWithAlphaComponent:top * 0.25].CGColor, (id)UIColor.clearColor.CGColor];
     [CATransaction commit];
     CGFloat pad = 16;
     _icon.frame = CGRectMake(pad, 14, 22, 22);
@@ -277,8 +295,25 @@ static void shapeGlass(UIVisualEffectView *v, CGFloat radius) {
 }
 
 // What should be up: the lines of the playing song, or nothing (the section closes).
+// Clarity and tint, live: the glass style is swapped when the slider crosses the middle (iOS 26), and the blur's
+// strength follows the slider before that (a material blur faded toward clear).
+- (void)applyGlass {
+    CGFloat f = frost();
+    BOOL clear = f < 0.5;
+    if (_liquid && clear != _clearGlass) {
+        _clearGlass = clear;
+        BOOL liquid = NO;
+        UIVisualEffect *e = glassEffect(&liquid, clear);
+        if (liquid) _glass.effect = e;
+    }
+    // Real glass is never faded (it would lose its edge); the blur fallback is, from almost nothing to full frost.
+    _glass.alpha = _liquid ? 1 : 0.12 + 0.88 * f;
+    [self setNeedsLayout];
+}
+
 - (void)changed {
     @try {
+        [self applyGlass];
         resolveSymbols();
         NSDictionary *playing = MRGNowPlaying();
         BOOL song = MRGAddonInstalled(kAddon) && playing && ![playing[@"ad"] boolValue] && sgLines && sgLead && sgText;
@@ -343,6 +378,7 @@ static void shapeGlass(UIVisualEffectView *v, CGFloat radius) {
         l.font = font;
         l.textColor = UIColor.whiteColor;
         l.numberOfLines = 0;
+        shadowText(l);
         CGFloat h = ceil([l sizeThatFits:CGSizeMake(w, CGFLOAT_MAX)].height);
         // Scaled about the leading edge, so a dimmed line stays aligned with the active one.
         l.layer.anchorPoint = CGPointMake(0, 0.5);
@@ -540,8 +576,12 @@ void MRGPopupPlace(UIView *page) {
 - (NSArray<MRGAddonSetting *> *)addonSettings {
     MRGAddonSetting *size = [MRGAddonSetting slider:@"size" title:@"Text size" min:18 max:30 fallback:24];
     MRGAddonSetting *lines = [MRGAddonSetting picker:@"lines" title:@"Lines shown" options:@[@"3", @"4", @"5"] values:@[@3, @4, @5] fallback:@4];
-    lines.footer = @"The lines and their timing come from Vitrine's lyrics. The shelf only opens for songs with synced lyrics; in Low Power Mode the lines change without the spring and the blur.";
-    return @[size, lines];
+    MRGAddonSetting *clarity = [MRGAddonSetting slider:@"frost" title:@"Glass clarity" min:0 max:1 fallback:0.3];
+    clarity.footer = @"Left is clear, right is frosted.";
+    clarity.live = YES;
+    MRGAddonSetting *tint = [MRGAddonSetting slider:@"tint" title:@"Tint" min:0 max:0.5 fallback:0.10];
+    tint.live = YES;
+    return @[size, lines, clarity, tint];
 }
 // On or off takes effect on Home right away: every Home page seen gets its shelf (or loses its room).
 static void relayoutHome(void) {
