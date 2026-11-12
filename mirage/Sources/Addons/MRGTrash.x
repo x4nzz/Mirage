@@ -77,7 +77,10 @@ static void placeButton(UIView *root) {
     UIButton *button = objc_getAssociatedObject(root, &kButtonKey);
     BOOL show = MRGAddonInstalled(kAddon) && MRGNowPlaying()[@"uri"] != nil;
     if (!show) { button.hidden = YES; return; }
-    UIStackView *row = headerRow(root);
+    // The row is found once per header and remembered (the search walks up to 400 views and this runs on every
+    // layout of the player's header).
+    UIStackView *row = (UIStackView *)button.superview;
+    if (![row isKindOfClass:UIStackView.class] || ![row isDescendantOfView:root]) row = headerRow(root);
     UIView *minimize = row.arrangedSubviews.firstObject;
     if (!row || !minimize) { button.hidden = YES; return; }
     if (!button) {
