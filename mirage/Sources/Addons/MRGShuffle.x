@@ -7,6 +7,7 @@
 #import "MRGPlaylists.h"
 #import "MRGDJLog.h"
 #import "MRGPrefs.h"
+#import <QuartzCore/QuartzCore.h>
 
 static NSString *const kAddon = @"shuffle-plus";
 static NSMutableArray<NSString *> *sRecent;
@@ -97,7 +98,15 @@ static void webAlbum(NSString *albumURI, void (^done)(NSArray<NSDictionary *> *,
     }] resume];
 }
 
+static NSString *sAppliedContext;
+static NSString *sQueuedFor;   // the context whose queue Shuffle+ filled, so turning shuffle (or Shuffle+) off can take it back
+static CFTimeInterval sAppliedAt;
+
 static void applyShuffle(NSString *context) {
+    // Spotify's own button and the player state can both report the same switch; one rebuild per switch.
+    if ([context isEqualToString:sAppliedContext ?: @""] && CACurrentMediaTime() - sAppliedAt < 5) return;
+    sAppliedContext = [context copy];
+    sAppliedAt = CACurrentMediaTime();
     void (^use)(NSArray<NSDictionary *> *, NSString *) = ^(NSArray<NSDictionary *> *tracks, NSString *error) {
         if (!MRGAddonInstalled(kAddon)) return;
         if (![context isEqualToString:MRGPlayerContextURI() ?: @""]) return;
@@ -109,12 +118,26 @@ static void applyShuffle(NSString *context) {
         for (NSDictionary *t in ordered) if (t[@"uri"]) [uris addObject:t[@"uri"]];
         MRGClearQueue(^(NSUInteger removed, NSString *clearError) {
             MRGQueueTracks(uris, ^(BOOL ok, NSString *queueError) {
+                sQueuedFor = ok ? [context copy] : nil;
                 MRGDJLog(@"shuffle+: %@ %lu tracks%@", context, (unsigned long)uris.count, ok ? @"" : [NSString stringWithFormat:@" — queue refused (%@). Spotify's own shuffle stays. Free accounts often can't queue.", queueError ?: clearError ?: @"?"]);
             });
         });
     };
     if ([context hasPrefix:@"spotify:playlist:"]) MRGPlaylistContents(context, use);
     else if ([context hasPrefix:@"spotify:album:"]) webAlbum(context, use);
+}
+
+// Shuffle off (or Shuffle+ turned off) while Shuffle+'s order is queued: the queue it filled is cleared, so Spotify goes
+// back to playing the playlist in its own order instead of working through 200 queued songs.
+static void takeBackQueue(void) {
+    if (!sQueuedFor.length) return;
+    NSString *was = sQueuedFor;
+    sQueuedFor = nil;
+    sAppliedContext = nil;
+    if (![was isEqualToString:MRGPlayerContextURI() ?: @""]) return;
+    MRGClearQueue(^(NSUInteger removed, NSString *error) {
+        MRGDJLog(@"shuffle+: shuffle off, took back %lu queued songs%@", (unsigned long)removed, error ? [@" — " stringByAppendingString:error] : @"");
+    });
 }
 
 @interface MRGShuffleAddon : NSObject <MRGAddon>
@@ -133,7 +156,7 @@ static void applyShuffle(NSString *context) {
     return @[artist, recent, window];
 }
 - (void)addonDidEnable {}
-- (void)addonDidDisable {}
+- (void)addonDidDisable { takeBackQueue(); }
 - (NSString *)addonSummary { return avoidArtist() ? @"Artists separated" : @"On"; }
 @end
 
@@ -143,7 +166,7 @@ static void applyShuffle(NSString *context) {
     if (!on || !MRGAddonInstalled(kAddon)) return result;
     NSString *context = MRGPlayerContextURI();
     if ([context hasPrefix:@"spotify:playlist:"] || [context hasPrefix:@"spotify:album:"]) {
-        dispatch_async(dispatch_get_main_queue(), ^{ applyShuffle(context); });
+        dispatch_async(dispatch_get_main_queue(), ^{ @try { applyShuffle(context); } @catch (NSException *e) { MRGDJLog(@"shuffle+: threw %@", e.reason); } });
     }
     return result;
 }
@@ -154,5 +177,15 @@ static void applyShuffle(NSString *context) {
     if (NSClassFromString(@"SPTEsperantoPlayer")) %init;
     [NSNotificationCenter.defaultCenter addObserverForName:MRGPlayerTrackChangedNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
         remember(n.userInfo[@"uri"]);
+    }];
+    [NSNotificationCenter.defaultCenter addObserverForName:MRGPlayerShuffleOffNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
+        @try { takeBackQueue(); } @catch (NSException *e) {}
+    }];
+    [NSNotificationCenter.defaultCenter addObserverForName:MRGPlayerShuffleOnNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
+        if (!MRGAddonInstalled(kAddon)) return;
+        NSString *context = [n.userInfo[@"context"] isKindOfClass:NSString.class] ? n.userInfo[@"context"] : MRGPlayerContextURI();
+        if ([context hasPrefix:@"spotify:playlist:"] || [context hasPrefix:@"spotify:album:"]) {
+            @try { applyShuffle(context); } @catch (NSException *e) { MRGDJLog(@"shuffle+: threw %@", e.reason); }
+        }
     }];
 }

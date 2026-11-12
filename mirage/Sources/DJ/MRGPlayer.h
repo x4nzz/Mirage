@@ -5,6 +5,8 @@
 #import <Foundation/Foundation.h>
 
 extern NSString *const MRGPlayerTrackChangedNotification;   // main queue; userInfo: uri, title, artist, ad
+extern NSString *const MRGPlayerShuffleOnNotification;     // main queue, when shuffle goes from off to on; userInfo: context
+extern NSString *const MRGPlayerShuffleOffNotification;    // and from on to off
 
 id MRGPlayerInstance(void);
 NSDictionary *MRGNowPlaying(void);                 // uri, title, artist, image (https, when the player has one), or nil

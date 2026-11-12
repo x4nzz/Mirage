@@ -10,6 +10,8 @@
 #import "MRGDJLog.h"
 
 NSString *const MRGPlayerTrackChangedNotification = @"MiragePlayerTrackChanged";
+NSString *const MRGPlayerShuffleOnNotification = @"MiragePlayerShuffleOn";
+NSString *const MRGPlayerShuffleOffNotification = @"MiragePlayerShuffleOff";
 
 @interface SPTPlayerTrack : NSObject
 @property (nonatomic, readonly) id URI;
@@ -209,8 +211,21 @@ static double stateDuration(id st) {
     return v > 3600 ? v / 1000.0 : v;
 }
 
+static int sg_lastShuffle = -1;
+
 static void stateChanged(id state) {
     if (![state isKindOfClass:objc_getClass("SPTPlayerState")]) return;
+    // Shuffle turned on, however it was turned on (Spotify's own button doesn't have to go through the player's
+    // setShufflingContext:). Read from the state's options, the same flag Vitrine's PlayerState reads.
+    id options = sget(state, @"options");
+    if (options && [options respondsToSelector:NSSelectorFromString(@"shufflingContext")]) {
+        int shuffle = sflag(options, @"shufflingContext") ? 1 : 0;
+        if (sg_lastShuffle == 0 && shuffle == 1)
+            [NSNotificationCenter.defaultCenter postNotificationName:MRGPlayerShuffleOnNotification object:nil userInfo:@{@"context": stateContext(state) ?: @""}];
+        else if (sg_lastShuffle == 1 && shuffle == 0)
+            [NSNotificationCenter.defaultCenter postNotificationName:MRGPlayerShuffleOffNotification object:nil userInfo:@{@"context": stateContext(state) ?: @""}];
+        sg_lastShuffle = shuffle;
+    }
     NSMutableDictionary *d = [infoOf(stateTrack(state)) mutableCopy];
     NSString *uri = d[@"uri"];
     if (!uri || [uri isEqualToString:sg_lastURI]) return;
