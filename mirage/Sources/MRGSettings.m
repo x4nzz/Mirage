@@ -32,7 +32,7 @@ static NSArray<NSString *> *aboutRows(void) {
     NSMutableArray *r = [@[@"version", @"image", @"vitrine"] mutableCopy];
     if (MRGDuplicateSummary()) [r addObject:@"dup"];
     if (MRGSafeModeActive() || MRGSafeModeNote()) [r addObject:@"safe"];
-    [r addObject:@"share"];
+    [r addObjectsFromArray:@[@"backup", @"restore", @"share"]];
     return r;
 }
 
@@ -773,6 +773,7 @@ static NSString *ip3(NSInteger row) { return row == 3 ? @"Voice" : row == 4 ? @"
         case MRGSecAbout: {
             NSArray *rows = aboutRows();
             NSString *row = ip.row < (NSInteger)rows.count ? rows[ip.row] : @"";
+            if ([row isEqualToString:@"restore"]) return [self actionCell:@"Restore from backup" symbol:@"clock.arrow.circlepath" destructive:NO enabled:YES];
             if ([row isEqualToString:@"share"]) {
                 UITableViewCell *c = [self actionCell:@"Share diagnostics" symbol:@"stethoscope" destructive:NO enabled:YES];
                 c.detailTextLabel.text = @"No keys";
@@ -786,6 +787,7 @@ static NSString *ip3(NSInteger row) { return row == 3 ? @"Voice" : row == 4 ? @"
             c.detailTextLabel.textColor = UIColor.grayColor;
             if ([row isEqualToString:@"version"]) { c.textLabel.text = @"Version"; c.detailTextLabel.text = MRGVersionLine(); }
             else if ([row isEqualToString:@"image"]) { c.textLabel.text = @"Running from"; c.detailTextLabel.text = [NSString stringWithFormat:@"%@ · %@", MRGImagePath().lastPathComponent, uuid.length >= 8 ? [uuid substringToIndex:8] : @"?"]; }
+            else if ([row isEqualToString:@"backup"]) { c.textLabel.text = @"Settings backup"; c.detailTextLabel.text = MRGSettingsBackupSummary(); }
             else if ([row isEqualToString:@"vitrine"]) { c.textLabel.text = @"Vitrine"; c.detailTextLabel.text = NSClassFromString(@"SGModSettingsRow") ? @"Loaded" : @"Not loaded"; }
             else if ([row isEqualToString:@"dup"]) {
                 c.textLabel.text = @"Another Mirage"; c.detailTextLabel.text = MRGDuplicateSummary() ?: @"";
@@ -845,12 +847,27 @@ static NSString *ip3(NSInteger row) { return row == 3 ? @"Voice" : row == 4 ? @"
         NSString *row = ip.row < (NSInteger)rows.count ? rows[ip.row] : @"";
         if ([row isEqualToString:@"share"]) MRGShareDiagnostics(self, [t cellForRowAtIndexPath:ip]);
         else if ([row isEqualToString:@"safe"]) [self safeModeSheet];
+        else if ([row isEqualToString:@"restore"]) [self restoreBackupSheet];
         return;
     }
     if (ip.section == MRGSecBackgrounds) { MRGShowBackgroundSettings(self); return; }
     if (ip.section == MRGSecSaver) { MRGPushPage(self, MRGSaverPage()); return; }
     if (ip.section == MRGSecDJ) { MRGShowDJSettings(self); return; }
     if (ip.section == MRGSecShop) { MRGPushPage(self, MRGAddonShopPage()); return; }
+}
+
+- (void)restoreBackupSheet {
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:@"Restore from backup" message:MRGSettingsBackupSummary() preferredStyle:UIAlertControllerStyleAlert];
+    [a addAction:[UIAlertAction actionWithTitle:@"Restore" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *x) {
+        MRGSettingsRestoreBackup(^(NSUInteger n, NSString *error) {
+            NSString *msg = error ?: [NSString stringWithFormat:@"%lu settings restored. Some show after Spotify restarts.", (unsigned long)n];
+            UIAlertController *b = [UIAlertController alertControllerWithTitle:error ? @"Nothing restored" : @"Restored" message:msg preferredStyle:UIAlertControllerStyleAlert];
+            [b addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleCancel handler:nil]];
+            if (self.isViewLoaded && self.view.window) { [self.tableView reloadData]; [self presentViewController:b animated:YES completion:nil]; }
+        });
+    }]];
+    [a addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:a animated:YES completion:nil];
 }
 
 - (void)safeModeSheet {

@@ -8,6 +8,7 @@
 #import "Addons/MRGAddon.h"
 #import "MRGAddons.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+#import <Security/Security.h>
 
 static NSString *const kInclude = @"mirage.saver.includeFiles";
 
@@ -26,6 +27,7 @@ static BOOL settingsKey(NSString *key) {
     // Per-launch bookkeeping, not settings: a restored "launching" flag would turn that add-on off as if it crashed.
     if ([key hasSuffix:@".launching"] || [key hasSuffix:@".notice"] || [key hasSuffix:@".recent"]) return NO;
     if ([key isEqualToString:@"mirage.saver.present"] || [key hasPrefix:@"mirage.safemode."]) return NO;
+    if ([key hasPrefix:@"mirage.saver.keychain"]) return NO;   // the backup's own bookkeeping
     return YES;
 }
 
@@ -131,6 +133,73 @@ static NSDictionary *currentPrefs(void) {
     return prefs;
 }
 
+#pragma mark - keychain backup
+
+// The same settings as the autosave (never API keys, history or per-launch flags), also kept as one generic-password
+// item in the iOS keychain: service com.x4nzz.mirage.settings, account "settings", readable after first unlock, not
+// synced to iCloud, default access group. The API keys are their own items (service com.x4nzz.mirage.dj) and are
+// never touched here. The keychain can outlive a deleted app when the reinstall is signed by the same team, which a
+// Documents file can't; with LiveContainer or a different signing team the item may not be visible.
+static NSString *const kBackupService = @"com.x4nzz.mirage.settings";
+static NSString *const kBackupAccount = @"settings";
+static NSString *const kBackupAt = @"mirage.saver.keychainAt";       // last successful write (seconds since 1970)
+static NSString *const kBackupError = @"mirage.saver.keychainError"; // last failure, if the keychain refused
+
+static NSMutableDictionary *backupQuery(void) {
+    return [@{(id)kSecClass: (id)kSecClassGenericPassword, (id)kSecAttrService: kBackupService,
+              (id)kSecAttrAccount: kBackupAccount, (id)kSecAttrSynchronizable: @NO} mutableCopy];
+}
+
+// Off the main thread (the autosave queue). Returns YES when the item holds these settings.
+static BOOL backupWrite(NSDictionary *prefs) {
+    NSDictionary *doc = @{@"version": @1, @"saved": NSDate.date, @"prefs": prefs};
+    NSData *data = [NSPropertyListSerialization dataWithPropertyList:doc format:NSPropertyListBinaryFormat_v1_0 options:0 error:nil];
+    if (!data.length) return NO;
+    NSDictionary *attrs = @{(id)kSecValueData: data, (id)kSecAttrAccessible: (id)kSecAttrAccessibleAfterFirstUnlock};
+    OSStatus st = SecItemUpdate((CFDictionaryRef)backupQuery(), (CFDictionaryRef)attrs);
+    if (st == errSecItemNotFound) {
+        NSMutableDictionary *add = backupQuery();
+        [add addEntriesFromDictionary:attrs];
+        st = SecItemAdd((CFDictionaryRef)add, NULL);
+    }
+    NSUserDefaults *d = NSUserDefaults.standardUserDefaults;
+    if (st == errSecSuccess) {
+        [d setDouble:NSDate.date.timeIntervalSince1970 forKey:kBackupAt];
+        if ([d objectForKey:kBackupError]) [d removeObjectForKey:kBackupError];
+        return YES;
+    }
+    NSString *why = st == errSecMissingEntitlement ? @"no keychain access in this signature" : [NSString stringWithFormat:@"error %d", (int)st];
+    if (![[d stringForKey:kBackupError] isEqualToString:why]) {
+        [d setObject:why forKey:kBackupError];
+        MRGDJLog(@"settings: keychain backup failed (%@)", why);
+    }
+    return NO;
+}
+
+static NSDictionary *backupRead(NSDate **savedOut) {
+    NSMutableDictionary *q = backupQuery();
+    q[(id)kSecReturnData] = @YES;
+    q[(id)kSecMatchLimit] = (id)kSecMatchLimitOne;
+    CFTypeRef out = NULL;
+    if (SecItemCopyMatching((CFDictionaryRef)q, &out) != errSecSuccess || !out) return nil;
+    NSData *data = (__bridge_transfer NSData *)out;
+    if (![data isKindOfClass:NSData.class]) return nil;
+    id doc = [NSPropertyListSerialization propertyListWithData:data options:NSPropertyListImmutable format:NULL error:nil];
+    if (![doc isKindOfClass:NSDictionary.class] || ![doc[@"prefs"] isKindOfClass:NSDictionary.class]) return nil;
+    if (savedOut && [doc[@"saved"] isKindOfClass:NSDate.class]) *savedOut = doc[@"saved"];
+    return doc[@"prefs"];
+}
+
+// Writes the settings that pass the same filter as an import; returns how many.
+static NSUInteger applySaved(NSDictionary *saved) {
+    NSUserDefaults *d = NSUserDefaults.standardUserDefaults;
+    __block NSUInteger n = 0;
+    [saved enumerateKeysAndObjectsUsingBlock:^(id key, id obj, BOOL *stop) {
+        if ([key isKindOfClass:NSString.class] && settingsKey(key) && plistValue(obj)) { [d setObject:obj forKey:key]; n++; }
+    }];
+    return n;
+}
+
 static NSDictionary *sLastSaved;   // touched on sSaveQueue only
 static BOOL sSaveQueued;           // main thread only
 static NSString *const kPresent = @"mirage.saver.present";
@@ -148,7 +217,10 @@ static void autosaveOnQueue(void) {
     @try {
         NSDictionary *prefs = currentPrefs();
         if (!prefs.count || [prefs isEqualToDictionary:sLastSaved ?: @{}]) return;
-        if ([prefs writeToURL:autosaveURL() atomically:YES]) sLastSaved = prefs;
+        BOOL file = [prefs writeToURL:autosaveURL() atomically:YES];
+        BOOL keychain = backupWrite(prefs);
+        if (file) sLastSaved = prefs;   // a refused keychain write is retried with the next change, not in a loop
+        (void)keychain;
         if (![NSUserDefaults.standardUserDefaults boolForKey:kPresent]) [NSUserDefaults.standardUserDefaults setBool:YES forKey:kPresent];
     } @catch (NSException *e) {
         MRGDJLog(@"settings: autosave threw %@", e.reason);
@@ -179,26 +251,58 @@ static void autosaveSoon(void) {
 }
 
 // Runs at load, before the add-ons start, so it has to be cheap: once an autosave has been made (kPresent is set)
-// the settings are known to be there and nothing else is read. Only with no marker and an autosave file on disk
-// (a reinstall that kept Documents) are the defaults scanned and the file read.
+// the settings are known to be there and nothing else is read. With no marker and no Mirage settings in the defaults
+// (a reinstall), the autosave file is loaded, or if there is none, the keychain backup. The log says which.
 static void autosaveRestore(void) {
     @try {
         NSUserDefaults *d = NSUserDefaults.standardUserDefaults;
         if ([d boolForKey:kPresent]) return;
-        NSURL *url = autosaveURL();
-        if (![NSFileManager.defaultManager fileExistsAtPath:url.path]) return;
         if (currentPrefs().count) { [d setBool:YES forKey:kPresent]; return; }   // settings are there: nothing to bring back
-        NSDictionary *saved = [NSDictionary dictionaryWithContentsOfURL:url];
-        if (![saved isKindOfClass:NSDictionary.class] || !saved.count) return;
-        __block NSUInteger n = 0;
-        [saved enumerateKeysAndObjectsUsingBlock:^(id key, id obj, BOOL *stop) {
-            if ([key isKindOfClass:NSString.class] && settingsKey(key) && plistValue(obj)) { [d setObject:obj forKey:key]; n++; }
-        }];
+        NSURL *url = autosaveURL();
+        NSDictionary *saved = [NSFileManager.defaultManager fileExistsAtPath:url.path] ? [NSDictionary dictionaryWithContentsOfURL:url] : nil;
+        NSString *from = @"the autosave";
+        if (![saved isKindOfClass:NSDictionary.class] || !saved.count) {
+            NSDate *when = nil;
+            saved = backupRead(&when);
+            from = when ? [NSString stringWithFormat:@"the keychain backup of %@", when] : @"the keychain backup";
+        }
+        if (![saved isKindOfClass:NSDictionary.class] || !saved.count) {
+            MRGDJLog(@"settings: no Mirage settings, no autosave and no keychain backup; starting fresh");
+            return;
+        }
+        NSUInteger n = applySaved(saved);
         [d setBool:YES forKey:kPresent];
-        MRGDJLog(@"settings: restored %lu settings from the autosave", (unsigned long)n);
+        MRGDJLog(@"settings: restored %lu settings from %@", (unsigned long)n, from);
     } @catch (NSException *e) {
         MRGDJLog(@"settings: autosave restore threw %@", e.reason);
     }
+}
+
+NSString *MRGSettingsBackupSummary(void) {
+    NSUserDefaults *d = NSUserDefaults.standardUserDefaults;
+    NSString *err = [d stringForKey:kBackupError];
+    if (err.length) return [@"Keychain · not saved: " stringByAppendingString:err];
+    double at = [d doubleForKey:kBackupAt];
+    if (at <= 0) return @"Keychain · not saved yet";
+    static NSDateFormatter *f;
+    if (!f) { f = [NSDateFormatter new]; f.dateStyle = NSDateFormatterShortStyle; f.timeStyle = NSDateFormatterShortStyle; f.doesRelativeDateFormatting = YES; }
+    return [@"Keychain · last saved " stringByAppendingString:[f stringFromDate:[NSDate dateWithTimeIntervalSince1970:at]]];
+}
+
+void MRGSettingsRestoreBackup(void (^done)(NSUInteger restored, NSString *error)) {
+    dispatch_async(saveQueue(), ^{
+        NSDictionary *saved = nil;
+        @try { saved = backupRead(NULL); } @catch (NSException *e) { saved = nil; }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (!saved.count) { if (done) done(0, @"There's no settings backup in the keychain for this install."); return; }
+            NSUInteger n = 0;
+            @try { n = applySaved(saved); } @catch (NSException *e) { if (done) done(0, e.reason ?: @"The backup couldn't be applied."); return; }
+            dispatch_async(saveQueue(), ^{ sLastSaved = nil; });
+            MRGDJLog(@"settings: restored %lu settings from the keychain backup (by hand)", (unsigned long)n);
+            MRGPostChange();
+            if (done) done(n, nil);
+        });
+    });
 }
 
 __attribute__((constructor)) static void mrgAutosaveConstructor(void) {
