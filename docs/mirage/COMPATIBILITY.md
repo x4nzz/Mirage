@@ -20,10 +20,10 @@ These change the layout of Swift views or sheets that Spotify renames or rebuild
 | Vinyl | `CreativeWorkCommons_CoverArtTiltKit.CoverArtTiltView`, `NowPlaying_ContentLayersImpl.CoverArtCellImpl` |
 | Genres | `NowPlaying_ScrollImpl.NPVBackgroundViewController` |
 | Shuffle+ button | the `Components.UI.ShuffleButton` control |
-| Shuffle+ in Listening modes | `SmartShuffle_CoreImpl.PlayModePickerView`, rows `Components.UI.PlayModeRow` |
+| Shuffle+ in Listening modes | `SmartShuffle_CoreImpl.PlayModePickerViewController`, rows `Components.UI.PlayModeRow` |
 | Trash button / menu row | `NowPlaying_ModesImpl.HeaderElementsUnit`, `ContextMenu_InternalImpl.ContextMenuViewController` |
 | DJ player button | `NowPlaying_ModesImpl.HeaderElementsUnit` |
-| Now Playing kit (Focus mode, Cover ring, Lyrics backdrop, Up Next) | `NowPlaying_ModesImpl` units (Header, Information, Duration, PlaybackControls, Footer, Floating), `NowPlaying_ScrollImpl.NPVScrollViewController` |
+| Now Playing kit (Focus mode, Cover ring, Lyrics backdrop, Up Next, Radio's like signal) | `NowPlaying_ModesImpl` units (Header, Information, Duration, PlaybackControls, Footer, Floating), `NowPlaying_ScrollImpl.NPVScrollViewController` and `NPVBackgroundViewController`, `Lyrics_NPVContainerKit.LyricsContainerView`, the cover's `CoverArtTiltView` in `CoverArtCellImpl` |
 | Queue tools menu rows | `ContextMenu_InternalImpl.ContextMenuViewController` |
 
 Every one of them also checks that its classes exist before hooking, and catches exceptions in its layout code.

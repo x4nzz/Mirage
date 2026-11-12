@@ -109,6 +109,52 @@ Every theme in that file is checked (only the known keys, colors as `#RRGGBB`, n
 doesn't pass is dropped. **Download theme list** turns the fetch off. Off, or a fetch that fails, shows the
 bundled catalog and says so.
 
+## 0.6.6: radio, focus, the queue, Now Playing add-ons, version resilience
+
+New add-ons (all off by default, each with its own shop art and icon, settings on the Mirage page once on):
+
+| Add-on | Where it shows | Its settings |
+|---|---|---|
+| **Radio** (Library) | runs in the background; Spotify's queue | its page: Start / Stop, Coming up, What it learned, Forget |
+| **Focus mode** (Now Playing) | a ◎ button in the middle of the player's footer row (Connect · ◎ · queue) | Focus mode on, True black background, Keep the lyrics preview |
+| **On repeat** (Library) | its page | Recently played / On repeat this week, Play all, Save as a playlist |
+| **More like this** (Library) | its page | Like this song / Like this playlist, then Add them to the queue or Save as a new playlist |
+| **Cover ring** (Now Playing) | a progress line around the player's cover | Color (Accent, From the cover, White), Thickness |
+| **Lyrics backdrop** (Now Playing) | synced lines over the dimmed cover | Cover dimming, Text size (live) |
+| **Queue tools** (Playback) | Play next / After this album in a song's ⋯ menu | its page: Spotify's queue, drag to reorder, swipe to remove or Play next |
+| **Up Next** (Now Playing) | a row at the bottom of the cover; a card when you hold its middle | Row on the cover, Card on hold |
+
+- **Radio** keeps three of its picks waiting in Spotify's real queue, refilled after every song and
+  every 20 s. It's seeded from the artist playing (or your history) and artists like them. It learns
+  per artist as you listen: a skip in the first 30 s weighs an artist down, a full play lifts them, and
+  a like (the player's heart) lifts them more and brings in artists like them. Queued picks by an
+  artist that sank are taken out and replaced. It never queues a trashed or repeated song or the same
+  artist twice in a row. Starting another playlist yourself stops it; Spotify's own autoplay doesn't.
+- **Focus mode** leaves only the cover, previous / play-pause / next, the queue and Connect, on true
+  black. Everything else goes invisible in place (nothing moves) and comes back exactly as it was.
+- **Shuffle+** now appears in Spotify's **Listening modes** sheet (9.1.90 opens it from a playlist's
+  shuffle button) as a third row, with its icon, subtitle and a check while on. Picking it turns
+  Smart Shuffle off through Spotify's plain Shuffle, then Shuffle+ takes over the queue.
+- **Vinyl**: record color (Black, From the cover, Accent, Clear red, White; From the cover tints the
+  base, grooves, rim and light per track) and sleeve (Plain, Glossy, Worn). **Spin to the song's BPM**
+  takes one turn per four beats when Spotify gives the tempo, otherwise the speed you chose.
+- **AI DJ → How much like me** (Light / Strong / Max): Talk like me now works from a counted profile
+  of how you write (casing, the slang you use, stretched words, emoji, punctuation, length), taken
+  from the chat and the vibe box. It only changes how the DJ talks. Facts still come only from real
+  data, and lines read aloud have no emoji.
+- **Version resilience**: see [COMPATIBILITY.md](COMPATIBILITY.md). On a Spotify build other than
+  9.1.90 the fragile hooks stay off, and About → **Run on this Spotify anyway** turns them back on.
+- Every add-on description is one line, and the shop shows the built-in add-on's own text.
+
+Limits, honestly:
+
+- Cover ring is a progress ring, not a waveform: Spotify gives the app no waveform data for a track.
+- BPM spin depends on the Web API's audio features, which Spotify closed to many apps in 2024. When
+  it refuses three times, Vinyl uses the chosen speed for the rest of the session.
+- Automix is Premium-only on 9.1.90 and has no setting Mirage can reach, so Shuffle+ doesn't touch it.
+- Spotify Free can refuse queue edits. Radio, Queue tools and More like this say so when it does.
+- Lyrics backdrop needs Vitrine's synced lyrics.
+
 ## 0.6.5: new art, clearer lyrics glass, voices that sound different, keychain backup
 
 - **Art.** Every shop cover and icon is redrawn in the Vinyl card's style: a soft blurred mesh-gradient ground,
