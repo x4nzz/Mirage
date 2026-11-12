@@ -1297,8 +1297,12 @@ static MRGDJHeaderPill *sg_pill;   // the only one
     MRGDJ *dj = MRGDJ.shared;
     if (dj.state == MRGDJThinking) return dj.status.length ? dj.status : @"Picking your next set…";
     if (_talking) return @"Talking";
-    NSString *seg = dj.segment;
-    return seg.length ? seg : @"Your DJ";
+    NSString *seg = dj.segment.length ? dj.segment : @"Your DJ";
+    // What the DJ plays next, from its set (the song after the one on, or the set's first while it waits its turn).
+    NSInteger next = dj.currentIndex >= 0 ? dj.currentIndex + 1 : 0;
+    if (dj.state == MRGDJPlaying && next < (NSInteger)dj.set.count && dj.set[next].title.length)
+        return [NSString stringWithFormat:@"%@ · Next: %@", seg, dj.set[next].title];
+    return seg;
 }
 
 - (void)setTitleView:(UIView *)titleView {
