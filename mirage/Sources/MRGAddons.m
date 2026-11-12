@@ -9,12 +9,17 @@ static NSString *const kIndexURL = @"https://raw.githubusercontent.com/x4nzz/Mir
 // The same as addons/index.json in the repo, for a first launch offline or a GitHub that doesn't answer.
 static NSString *const kBundledIndex = @"{\"format\":1,\"addons\":[{\"id\":\"vinyl\",\"name\":\"Vinyl\",\"description\":\"Turns the Now Playing cover into a record sleeve. The cover slides to one side and a vinyl record peeks out from behind it. The record spins while music plays, stops when you pause, and its label shows the album art. You can pick the spin speed and the side the record sits on.\",\"preview\":\"https://raw.githubusercontent.com/x4nzz/Mirage/main/addons/previews/vinyl.png\",\"version\":\"1.1\",\"type\":\"Now Playing\",\"author\":\"Mirage\",\"min_mirage\":\"0.5.0\"}]}";
 
-BOOL MRGAddonBuiltIn(NSString *addonID) { return [@[@"vinyl"] containsObject:addonID ?: @""]; }
+BOOL MRGAddonBuiltIn(NSString *addonID) {
+    return MRGAddonObject(addonID) != nil || [@[@"vinyl"] containsObject:addonID ?: @""];
+}
 BOOL MRGAddonInstalled(NSString *addonID) { return addonID.length && MRGAddonBuiltIn(addonID) && [D() boolForKey:[@"mirage.addon." stringByAppendingString:addonID]]; }
 void MRGAddonSetInstalled(NSString *addonID, BOOL on) {
-    if (!addonID.length) return;
+    if (!addonID.length || !MRGAddonBuiltIn(addonID)) return;
     [D() setBool:on forKey:[@"mirage.addon." stringByAppendingString:addonID]];
+    if (on) MRGAddonClearCrashNotice(addonID);
     MRGDJLog(@"addons: %@ %@", addonID, on ? @"installed" : @"removed");
+    if (on) MRGAddonRunEnable(addonID);
+    else MRGAddonRunDisable(addonID);
     MRGPostChange();
 }
 NSUInteger MRGAddonsInstalledCount(void) {
@@ -42,9 +47,23 @@ static NSArray<NSDictionary *> *parseIndex(NSData *data) {
     return out.count ? out : nil;
 }
 
+// Registered add-ons always appear, even when the fetched index is older than this build.
+static NSArray<NSDictionary *> *mergeRegistered(NSArray<NSDictionary *> *index) {
+    NSMutableArray *out = [NSMutableArray arrayWithArray:index ?: @[]];
+    NSMutableSet *ids = [NSMutableSet set];
+    for (NSDictionary *a in out) if ([a[@"id"] isKindOfClass:NSString.class]) [ids addObject:a[@"id"]];
+    for (id<MRGAddon> addon in MRGRegisteredAddons()) {
+        if ([ids containsObject:addon.addonID]) continue;
+        [out addObject:@{@"id": addon.addonID, @"name": addon.addonName ?: addon.addonID,
+                         @"description": addon.addonDescription ?: @"", @"version": addon.addonVersion ?: @"1",
+                         @"type": addon.addonCategory ?: @"Add-on", @"author": @"Mirage", @"min_mirage": @"0.6.0"}];
+    }
+    return out;
+}
+
 NSArray<NSDictionary *> *MRGAddonIndex(void) {
     NSData *cached = [D() dataForKey:@"mirage.addons.index"];
-    return parseIndex(cached) ?: parseIndex([kBundledIndex dataUsingEncoding:NSUTF8StringEncoding]) ?: @[];
+    return mergeRegistered(parseIndex(cached) ?: parseIndex([kBundledIndex dataUsingEncoding:NSUTF8StringEncoding]) ?: @[]);
 }
 
 void MRGAddonRefresh(void (^done)(NSArray<NSDictionary *> *, NSString *)) {
@@ -202,59 +221,23 @@ static UIImage *placeholderArt(CGSize size) {
 - (void)tapped { if (self.onToggle) self.onToggle(); }
 @end
 
-#pragma mark - settings of an addon (Vinyl)
-
-@interface MRGVinylSettings : UITableViewController
-@end
-
-@implementation MRGVinylSettings
-- (instancetype)init { return [super initWithStyle:UITableViewStyleInsetGrouped]; }
-- (void)viewDidLoad {
-    [super viewDidLoad];
-    self.title = @"Vinyl";
-    self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
-    self.tableView.backgroundColor = UIColor.blackColor;
-    UIEdgeInsets inset = self.tableView.contentInset; inset.bottom = 150; self.tableView.contentInset = inset;
-}
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)t { return 2; }
-- (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)s { return 1; }
-- (NSString *)tableView:(UITableView *)t titleForHeaderInSection:(NSInteger)s { return s == 0 ? @"Spin speed" : @"Record side"; }
-- (NSString *)tableView:(UITableView *)t titleForFooterInSection:(NSInteger)s {
-    return s == 1 ? @"The record spins while a song plays and stops when you pause. If Spotify changes its player and the cover can't be found, Now Playing simply stays as it is." : nil;
-}
-- (UITableViewCell *)tableView:(UITableView *)t cellForRowAtIndexPath:(NSIndexPath *)ip {
-    return MRGSafeCell(ip, ^UITableViewCell *{
-        UITableViewCell *c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
-        c.backgroundColor = [UIColor colorWithWhite:0.11 alpha:0.9];
-        c.selectionStyle = UITableViewCellSelectionStyleNone;
-        NSArray *items = ip.section == 0 ? @[@"Slow", @"33⅓ RPM", @"45 RPM"] : @[@"Left", @"Right"];
-        UISegmentedControl *seg = [[UISegmentedControl alloc] initWithItems:items];
-        seg.selectedSegmentTintColor = MRGAccent();
-        [seg setTitleTextAttributes:@{NSForegroundColorAttributeName: MRGOnAccent()} forState:UIControlStateSelected];
-        if (ip.section == 0) {
-            double s = MRGVinylSecondsPerTurn();
-            seg.selectedSegmentIndex = s > 2.5 ? 0 : s > 1.5 ? 1 : 2;
-            [seg addTarget:self action:@selector(speed:) forControlEvents:UIControlEventValueChanged];
-        } else {
-            seg.selectedSegmentIndex = MRGVinylOnLeft() ? 0 : 1;
-            [seg addTarget:self action:@selector(side:) forControlEvents:UIControlEventValueChanged];
-        }
-        seg.translatesAutoresizingMaskIntoConstraints = NO;
-        [c.contentView addSubview:seg];
-        [NSLayoutConstraint activateConstraints:@[
-            [seg.leadingAnchor constraintEqualToAnchor:c.contentView.layoutMarginsGuide.leadingAnchor],
-            [seg.trailingAnchor constraintEqualToAnchor:c.contentView.layoutMarginsGuide.trailingAnchor],
-            [seg.topAnchor constraintEqualToAnchor:c.contentView.topAnchor constant:10],
-            [seg.bottomAnchor constraintEqualToAnchor:c.contentView.bottomAnchor constant:-10],
-        ]];
-        return c;
-    });
-}
-- (void)speed:(UISegmentedControl *)s { MRGVinylSetSecondsPerTurn([@[@4.0, @1.8, @1.33][s.selectedSegmentIndex] doubleValue]); }
-- (void)side:(UISegmentedControl *)s { MRGVinylSetOnLeft(s.selectedSegmentIndex == 0); }
-@end
-
 #pragma mark - the shop
+
+static NSString *addonSummary(NSDictionary *a) {
+    id<MRGAddon> addon = MRGAddonObject(a[@"id"]);
+    if ([addon respondsToSelector:@selector(addonSummary)]) {
+        NSString *s = [addon addonSummary];
+        if (s.length) return s;
+    }
+    if ([a[@"id"] isEqualToString:@"vinyl"])
+        return [NSString stringWithFormat:@"%@ · %@", MRGVinylSecondsPerTurn() > 2.5 ? @"Slow" : MRGVinylSecondsPerTurn() > 1.5 ? @"33⅓ RPM" : @"45 RPM", MRGVinylOnLeft() ? @"Left" : @"Right"];
+    return nil;
+}
+
+static BOOL addonHasSettings(NSDictionary *a) {
+    id<MRGAddon> addon = MRGAddonObject(a[@"id"]);
+    return MRGAddonInstalled(a[@"id"]) && [addon addonSettings].count > 0;
+}
 
 @interface MRGAddonShop : UITableViewController
 @end
@@ -331,10 +314,14 @@ static UIImage *placeholderArt(CGSize size) {
     return MRGSafeCount(^NSInteger {
         if (!self->_addons.count) return 0;
         NSDictionary *a = self->_addons[s];
-        return 1 + ([a[@"id"] isEqualToString:@"vinyl"] && MRGAddonInstalled(a[@"id"]) ? 1 : 0);
+        return 1 + (addonHasSettings(a) ? 1 : 0);
     });
 }
 - (NSString *)tableView:(UITableView *)t titleForFooterInSection:(NSInteger)s {
+    if (s < (NSInteger)self->_addons.count) {
+        NSString *notice = MRGAddonCrashNotice(self->_addons[s][@"id"]);
+        if (notice.length) return notice;
+    }
     return s == (NSInteger)_addons.count - 1 || !_addons.count ? (_note ?: @"Pull down to check for new add-ons.") : nil;
 }
 
@@ -348,7 +335,7 @@ static UIImage *placeholderArt(CGSize size) {
             c.textLabel.textColor = UIColor.whiteColor;
             c.imageView.image = [UIImage systemImageNamed:@"slider.horizontal.3"];
             c.imageView.tintColor = MRGAccent();
-            c.detailTextLabel.text = [NSString stringWithFormat:@"%@ · %@", MRGVinylSecondsPerTurn() > 2.5 ? @"Slow" : MRGVinylSecondsPerTurn() > 1.5 ? @"33⅓ RPM" : @"45 RPM", MRGVinylOnLeft() ? @"Left" : @"Right"];
+            c.detailTextLabel.text = addonSummary(a);
             c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
             return c;
         }
@@ -366,7 +353,7 @@ static UIImage *placeholderArt(CGSize size) {
 
 - (void)tableView:(UITableView *)t didSelectRowAtIndexPath:(NSIndexPath *)ip {
     [t deselectRowAtIndexPath:ip animated:YES];
-    if (ip.row == 1) MRGPushPage(self, [MRGVinylSettings new]);
+    if (ip.row == 1) MRGPushPage(self, MRGAddonSettingsPage(self->_addons[ip.section][@"id"]));
 }
 
 - (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; [self.tableView reloadData]; }

@@ -3,6 +3,7 @@
 // can't safely load code); the shop only turns built-in features on, keeps their settings, and fetches preview
 // images. Installed state lives in NSUserDefaults (mirage.addon.<id>), and changes post MRGSettingsChangedNotification.
 #import <UIKit/UIKit.h>
+#import "Addons/MRGAddon.h"
 
 BOOL MRGAddonInstalled(NSString *addonID);
 void MRGAddonSetInstalled(NSString *addonID, BOOL on);

@@ -577,7 +577,30 @@ static void relayAll(void) {
     }
 }
 
+@interface MRGVinylAddon : NSObject <MRGAddon>
+@end
+@implementation MRGVinylAddon
+- (NSString *)addonID { return @"vinyl"; }
+- (NSString *)addonName { return @"Vinyl"; }
+- (NSString *)addonCategory { return @"Now Playing"; }
+- (NSString *)addonVersion { return @"1.1"; }
+- (NSString *)addonDescription { return @"Turns the Now Playing cover into a record sleeve. The cover slides to one side and a vinyl record peeks out from behind it. The record spins while music plays, stops when you pause, and its label shows the album art."; }
+- (NSArray<MRGAddonSetting *> *)addonSettings {
+    MRGAddonSetting *speed = [MRGAddonSetting picker:@"mirage.addon.vinyl.turn" title:@"Spin speed" options:@[@"Slow", @"33⅓ RPM", @"45 RPM"] values:@[@4.0, @1.8, @1.33] fallback:@1.8];
+    MRGAddonSetting *side = [MRGAddonSetting picker:@"mirage.addon.vinyl.left" title:@"Record side" options:@[@"Left", @"Right"] values:@[@YES, @NO] fallback:@NO];
+    side.footer = @"The record spins while a song plays and stops when you pause. If Spotify changes its player and the cover can't be found, Now Playing simply stays as it is.";
+    return @[speed, side];
+}
+- (void)addonDidEnable {}
+- (void)addonDidDisable {}
+- (NSString *)addonSummary {
+    double s = MRGVinylSecondsPerTurn();
+    return [NSString stringWithFormat:@"%@ · %@", s > 2.5 ? @"Slow" : s > 1.5 ? @"33⅓ RPM" : @"45 RPM", MRGVinylOnLeft() ? @"Left" : @"Right"];
+}
+@end
+
 %ctor {
+    MRGAddonRegister([MRGVinylAddon new]);
     if (cellClass() && tiltClass()) {
         %init(MRGVinylHooks);
         [NSNotificationCenter.defaultCenter addObserverForName:MRGSettingsChangedNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
