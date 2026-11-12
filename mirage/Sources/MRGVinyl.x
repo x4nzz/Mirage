@@ -801,7 +801,9 @@ static void MRGVinylApply(UIView *tilt) {
             [UIView animateWithDuration:0.35 animations:^{ vinyl.alpha = 1; }];
         }
         CGRect tf = tilt.window ? [tilt.superview convertRect:tilt.frame toView:nil] : CGRectZero;
-        logState([NSString stringWithFormat:@"on, art %.0fx%.0fpt, window %.0fpt, cell %.0fpt, room %.0fpt, vroom %.0fpt -> sleeve %.0fpt (x%.3f, shift %.1f), record %.0fpt peeking %.0fpt on the %@; sleeve on screen {%.0f,%.0f %.0fx%.0f}", S.width, S.height, fit.winW, fit.cellW, fit.room, fit.vroom, cover, fit.scale, fit.tx, side * kDisc * fit.scale, cover * kPeek, dir > 0 ? @"right" : @"left", tf.origin.x, tf.origin.y, tf.size.width, tf.size.height]);
+        // Only the sleeve in the middle of the screen is logged: the cover list keeps the songs either side laid out
+        // too, and logging each of them in turn filled 0.6.7's DJ log with several lines a second.
+        if (tilt.window && fabs(CGRectGetMidX(tf) - CGRectGetMidX(tilt.window.bounds)) < tilt.window.bounds.size.width * 0.25) logState([NSString stringWithFormat:@"on, art %.0fx%.0fpt, window %.0fpt, cell %.0fpt, room %.0fpt, vroom %.0fpt -> sleeve %.0fpt (x%.3f, shift %.1f), record %.0fpt peeking %.0fpt on the %@; sleeve on screen {%.0f,%.0f %.0fx%.0f}", S.width, S.height, fit.winW, fit.cellW, fit.room, fit.vroom, cover, fit.scale, fit.tx, side * kDisc * fit.scale, cover * kPeek, dir > 0 ? @"right" : @"left", tf.origin.x, tf.origin.y, tf.size.width, tf.size.height]);
     } @catch (NSException *e) {
         MRGDJLog(@"vinyl: layout threw %@, Now Playing stays stock", e.reason);
         @try { restore(tilt); } @catch (NSException *e2) {}
