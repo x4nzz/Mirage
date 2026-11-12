@@ -72,10 +72,11 @@ static void loadDisk(void) {
 static void saveDiskSoon(void) {
     if (sDiskDirty) return;
     sDiskDirty = YES;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         sDiskDirty = NO;
         loadDisk();
-        [sDisk writeToURL:cacheFile() atomically:YES];
+        NSDictionary *snapshot = [sDisk copy];
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{ [snapshot writeToURL:cacheFile() atomically:YES]; });
     });
 }
 
@@ -102,14 +103,10 @@ static void store(NSString *uri, NSInteger rgb) {
 }
 
 // Most common saturated color in a 24×24 downsample. -1 when the picture is too flat to use.
+// Core Graphics only (no UIKit drawing), so it runs on a background queue; the decode of the downloaded cover happens
+// here too, not on the main thread.
 static NSInteger paletteFrom(UIImage *image) {
-    if (!image) return -1;
-    CGSize size = CGSizeMake(24, 24);
-    UIGraphicsBeginImageContextWithOptions(size, YES, 1);
-    [image drawInRect:(CGRect){CGPointZero, size}];
-    UIImage *small = UIGraphicsGetImageFromCurrentImageContext();
-    UIGraphicsEndImageContext();
-    CGImageRef cg = small.CGImage;
+    CGImageRef cg = image.CGImage;
     if (!cg) return -1;
     CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
     UInt8 pixels[24 * 24 * 4];
@@ -182,16 +179,24 @@ static void resolve(NSDictionary *now) {
     if (!url) {
         UIImage *local = coverOnScreen();
         if (!local) { applyColor(-1, uri); return; }
-        NSInteger rgb = paletteFrom(local);
-        if (rgb >= 0) store(uri, rgb);
-        applyColor(rgb, uri);
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+            NSInteger rgb = -1;
+            @try { rgb = paletteFrom(local); } @catch (NSException *e) {}
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (![uri isEqualToString:sTrack]) return;
+                if (rgb >= 0) store(uri, rgb);
+                applyColor(rgb, uri);
+            });
+        });
         return;
     }
-    [[NSURLSession.sharedSession dataTaskWithURL:url completionHandler:^(NSData *data, NSURLResponse *resp, NSError *error) {
-        UIImage *image = data.length ? [UIImage imageWithData:data] : nil;
+    NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
+    request.timeoutInterval = 10;
+    [[NSURLSession.sharedSession dataTaskWithRequest:request completionHandler:^(NSData *data, NSURLResponse *resp, NSError *error) {
+        NSInteger rgb = -1;
+        @try { rgb = paletteFrom(data.length ? [UIImage imageWithData:data] : nil); } @catch (NSException *e) {}
         dispatch_async(dispatch_get_main_queue(), ^{
             if (![uri isEqualToString:sTrack]) return;
-            NSInteger rgb = paletteFrom(image);
             if (rgb >= 0) store(uri, rgb);
             applyColor(rgb, uri);
         });
