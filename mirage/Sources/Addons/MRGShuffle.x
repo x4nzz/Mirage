@@ -11,6 +11,7 @@
 #import "MRGDiagnostics.h"
 #import <QuartzCore/QuartzCore.h>
 #import <objc/runtime.h>
+#import <objc/message.h>
 
 static NSString *const kAddon = @"shuffle-plus";
 static NSMutableArray<NSString *> *sRecent;
@@ -175,12 +176,12 @@ static void takeBackQueue(void) {
 - (NSString *)addonName { return @"Shuffle+"; }
 - (NSString *)addonCategory { return @"Playback"; }
 - (NSString *)addonVersion { return @"1.0"; }
-- (NSString *)addonDescription { return @"A fourth state on Spotify's shuffle button: after Shuffle (and Smart Shuffle), one more tap gives Shuffle+, marked with a +, which doesn't play the same artist twice in a row and holds back songs you just heard. Long-press the button for a menu. It uses Spotify's own queue."; }
+- (NSString *)addonDescription { return @"Shuffle with no artist twice in a row and recent songs held back. Pick it in Listening modes or long-press shuffle."; }
 - (NSArray<MRGAddonSetting *> *)addonSettings {
     MRGAddonSetting *artist = [MRGAddonSetting toggle:@"artist" title:@"Separate the same artist" fallback:YES];
     MRGAddonSetting *recent = [MRGAddonSetting toggle:@"recent" title:@"Hold back recent songs" fallback:YES];
     MRGAddonSetting *window = [MRGAddonSetting slider:@"window" title:@"How many count as recent" min:5 max:40 fallback:15];
-    window.footer = @"Tap shuffle on a playlist or album until it shows the +, or long-press it and pick Shuffle+. Spotify Free often refuses a queue and a chosen track, and its skip limit still applies. When the queue is refused, Spotify's own shuffle is left as it is.";
+    window.footer = @"Spotify Free can refuse the queue; then its own shuffle stays.";
     return @[artist, recent, window];
 }
 - (void)addonDidEnable {}
@@ -364,6 +365,249 @@ static void shuffleWentOff(NSString *context) {
 }
 %end
 
+#pragma mark - Shuffle+ in Spotify's Listening modes sheet
+
+// 9.1.90 opens a "Listening modes" sheet from a playlist's shuffle button (SmartShuffle_CoreImpl.PlayModePickerView-
+// Controller: a header and one Components.UI.PlayModeRow per mode, Shuffle and Smart Shuffle). Shuffle+ joins it as a
+// third row in the same stack, styled from Spotify's own rows. Picking it picks Spotify's plain Shuffle first (so
+// Smart Shuffle is left and the playlist starts shuffled the way Spotify does it), then Shuffle+ takes over the queue
+// once shuffle is on. With the playlist not playing and no row that can be triggered, the page's playlist is played
+// shuffled by Mirage instead. The row shows a check while Shuffle+ is on for what's playing.
+static NSString *const kModeRowID = @"Components.UI.PlayModeRow";
+static CFTimeInterval sPendingUntil;   // a Shuffle+ pick waiting for shuffle to come on
+static char kPlusRowKey;
+
+static void findRows(UIView *v, NSMutableArray *into, int depth) {
+    if (!v || depth > 14 || into.count > 6) return;
+    if ([v.accessibilityIdentifier isEqualToString:kModeRowID]) { [into addObject:v]; return; }
+    for (UIView *s in v.subviews) findRows(s, into, depth + 1);
+}
+
+static NSArray<UILabel *> *labelsIn(UIView *v) {
+    NSMutableArray *out = [NSMutableArray array];
+    NSMutableArray *stack = [NSMutableArray arrayWithObject:v];
+    while (stack.count && out.count < 6) {
+        UIView *x = stack.firstObject; [stack removeObjectAtIndex:0];
+        if ([x isKindOfClass:UILabel.class] && [(UILabel *)x text].length) [out addObject:x];
+        [stack addObjectsFromArray:x.subviews];
+    }
+    return out;
+}
+
+// The page under the sheet names its playlist or album (spt_pageURI / pageURI), for when nothing is playing yet.
+static NSString *pageContextUnder(UIViewController *sheet) {
+    NSMutableArray *vcs = [NSMutableArray array];
+    for (UIViewController *p = sheet.presentingViewController; p; p = p.parentViewController) [vcs addObject:p];
+    NSMutableArray *stack = [vcs mutableCopy];
+    NSUInteger seen = 0;
+    while (stack.count && seen < 60) {
+        UIViewController *vc = stack.lastObject; [stack removeLastObject]; seen++;
+        for (NSString *name in @[@"spt_pageURI", @"pageURI"]) {
+            SEL sel = NSSelectorFromString(name);
+            if (![vc respondsToSelector:sel]) continue;
+            id u = nil;
+            @try { u = ((id (*)(id, SEL))objc_msgSend)(vc, sel); } @catch (NSException *e) { u = nil; }
+            NSString *str = [u isKindOfClass:NSURL.class] ? [(NSURL *)u absoluteString] : [u isKindOfClass:NSString.class] ? u : nil;
+            if (shufflable(str) && vc.viewIfLoaded.window) return str;
+        }
+        if ([vc isKindOfClass:UINavigationController.class]) { UIViewController *top = ((UINavigationController *)vc).topViewController; if (top) [stack addObject:top]; }
+        else [stack addObjectsFromArray:vc.childViewControllers];
+        if (vc.presentedViewController && vc.presentedViewController != sheet) [stack addObject:vc.presentedViewController];
+    }
+    return nil;
+}
+
+// Spotify's own Shuffle row, the way a tap reaches it: a control's action, a cell's selection, or VoiceOver's activate.
+static BOOL triggerRow(UIView *row) {
+    @try {
+        for (UIView *v = row; v; v = v.superview) {
+            if ([v isKindOfClass:UIControl.class]) { [(UIControl *)v sendActionsForControlEvents:UIControlEventTouchUpInside]; return YES; }
+            if (v != row) break;
+        }
+        for (UIView *v = row; v; v = v.superview) {
+            if ([v isKindOfClass:UICollectionViewCell.class]) {
+                UIView *cv = v.superview;
+                while (cv && ![cv isKindOfClass:UICollectionView.class]) cv = cv.superview;
+                UICollectionView *list = (UICollectionView *)cv;
+                NSIndexPath *ip = [list indexPathForCell:(UICollectionViewCell *)v];
+                if (ip && [list.delegate respondsToSelector:@selector(collectionView:didSelectItemAtIndexPath:)]) { [list.delegate collectionView:list didSelectItemAtIndexPath:ip]; return YES; }
+            }
+            if ([v isKindOfClass:UITableViewCell.class]) {
+                UIView *tv = v.superview;
+                while (tv && ![tv isKindOfClass:UITableView.class]) tv = tv.superview;
+                UITableView *list = (UITableView *)tv;
+                NSIndexPath *ip = [list indexPathForCell:(UITableViewCell *)v];
+                if (ip && [list.delegate respondsToSelector:@selector(tableView:didSelectRowAtIndexPath:)]) { [list.delegate tableView:list didSelectRowAtIndexPath:ip]; return YES; }
+            }
+        }
+        if ([row accessibilityActivate]) return YES;
+        for (UIView *s in row.subviews) if ([s isKindOfClass:UIControl.class] && ![s.accessibilityIdentifier containsString:@"LearnMore"]) { [(UIControl *)s sendActionsForControlEvents:UIControlEventTouchUpInside]; return YES; }
+    } @catch (NSException *e) { MRGDJLog(@"shuffle+: triggering Spotify's Shuffle row threw %@", e.reason); }
+    return NO;
+}
+
+@interface MRGPlusModeRow : UIControl
+@property (nonatomic, weak) UIViewController *sheet;
+@property (nonatomic, weak) UIView *shuffleRow;
+@property (nonatomic, strong) UIImageView *icon, *check;
+@property (nonatomic, strong) UILabel *title, *subtitle;
+- (void)refresh;
+@end
+
+@implementation MRGPlusModeRow
+- (instancetype)initWithTemplate:(UIView *)row {
+    if (!(self = [super initWithFrame:row.bounds])) return nil;
+    self.accessibilityIdentifier = @"Mirage.ShufflePlusModeRow";
+    self.isAccessibilityElement = YES;
+    self.accessibilityLabel = @"Shuffle+";
+    self.accessibilityTraits = UIAccessibilityTraitButton;
+    NSArray<UILabel *> *labels = labelsIn(row);
+    UILabel *t0 = labels.count ? labels[0] : nil, *t1 = labels.count > 1 ? labels[1] : nil;
+    UIImageSymbolConfiguration *conf = [UIImageSymbolConfiguration configurationWithPointSize:20 weight:UIImageSymbolWeightRegular];
+    _icon = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"shuffle" withConfiguration:conf]];
+    _icon.tintColor = t0.textColor ?: UIColor.whiteColor;
+    _icon.contentMode = UIViewContentModeCenter;
+    UILabel *plus = [UILabel new];
+    plus.text = @"+";
+    plus.font = [UIFont systemFontOfSize:11 weight:UIFontWeightBlack];
+    plus.textColor = UIColor.whiteColor;
+    plus.textAlignment = NSTextAlignmentCenter;
+    plus.backgroundColor = MRGAccent();
+    plus.layer.cornerRadius = 7;
+    plus.layer.masksToBounds = YES;
+    plus.frame = CGRectMake(20, -2, 14, 14);
+    [_icon addSubview:plus];
+    _title = [UILabel new];
+    _title.text = @"Shuffle+";
+    _title.font = t0.font ?: [UIFont systemFontOfSize:16 weight:UIFontWeightMedium];
+    _title.textColor = t0.textColor ?: UIColor.whiteColor;
+    _subtitle = [UILabel new];
+    _subtitle.text = @"No artist twice in a row; songs you just heard wait.";
+    _subtitle.font = t1.font ?: [UIFont systemFontOfSize:13];
+    _subtitle.textColor = t1.textColor ?: [UIColor colorWithWhite:0.7 alpha:1];
+    _subtitle.numberOfLines = 2;
+    _check = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"checkmark" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:15 weight:UIImageSymbolWeightSemibold]]];
+    _check.tintColor = MRGAccent();
+    for (UIView *v in @[_icon, _title, _subtitle, _check]) { v.userInteractionEnabled = NO; [self addSubview:v]; }
+    [self addTarget:self action:@selector(picked) forControlEvents:UIControlEventTouchUpInside];
+    [self refresh];
+    return self;
+}
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    CGRect b = self.bounds;
+    CGFloat h = b.size.height, left = 24, textX = 66;
+    // Spotify's rows: the icon at about 24pt, the text column after it. Taken from the template row when it has labels.
+    UIView *shuffle = self.shuffleRow;
+    NSArray<UILabel *> *labels = shuffle ? labelsIn(shuffle) : @[];
+    if (labels.count) {
+        CGRect r = [labels[0].superview convertRect:labels[0].frame toView:shuffle];
+        if (r.origin.x > 30 && r.origin.x < 120) textX = r.origin.x;
+    }
+    _icon.frame = CGRectMake(left - 4, (h - 32) / 2, 32, 32);
+    CGFloat w = b.size.width - textX - 44;
+    CGSize ts = [_title sizeThatFits:CGSizeMake(w, h)], ss = [_subtitle sizeThatFits:CGSizeMake(w, h)];
+    CGFloat total = ts.height + 2 + ss.height, y = (h - total) / 2;
+    _title.frame = CGRectMake(textX, y, w, ts.height);
+    _subtitle.frame = CGRectMake(textX, y + ts.height + 2, w, ss.height);
+    _check.frame = CGRectMake(b.size.width - 40, (h - 24) / 2, 24, 24);
+}
+- (void)setHighlighted:(BOOL)h { [super setHighlighted:h]; self.alpha = h ? 0.6 : 1; }
+- (void)refresh {
+    BOOL on = sPlus && [sPlusContext isEqualToString:MRGPlayerContextURI() ?: @""];
+    _check.hidden = !on;
+    self.accessibilityValue = on ? @"Selected" : nil;
+}
+- (void)picked {
+    [[UISelectionFeedbackGenerator new] selectionChanged];
+    UIViewController *sheet = self.sheet;
+    NSString *playing = MRGPlayerContextURI();
+    NSString *page = sheet ? pageContextUnder(sheet) : nil;
+    MRGCrumb(@"listening modes: Shuffle+ picked (page %@, playing %@)", page ?: @"?", playing ?: @"nothing");
+    // Already on this playlist: Shuffle+ right away (shuffle goes on if it isn't).
+    if (shufflable(playing) && (!page || [page isEqualToString:playing])) {
+        [sheet dismissViewControllerAnimated:YES completion:^{ enterPlus(playing); }];
+        return;
+    }
+    sPendingUntil = CACurrentMediaTime() + 10;
+    UIView *row = self.shuffleRow;
+    if (row && triggerRow(row)) {
+        MRGDJLog(@"shuffle+: Spotify's Shuffle picked for the page; Shuffle+ follows when shuffle is on");
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (sheet.presentingViewController && !sheet.isBeingDismissed) [sheet dismissViewControllerAnimated:YES completion:nil];
+        });
+        return;
+    }
+    if (page) {
+        [sheet dismissViewControllerAnimated:YES completion:nil];
+        MRGPlayContext(page, nil, @YES, ^(BOOL ok, NSString *error) {
+            MRGDJLog(@"shuffle+: played %@ shuffled for Shuffle+: %@", page, ok ? @"ok" : error ?: @"refused");
+            if (!ok) sPendingUntil = 0;
+        });
+        return;
+    }
+    sPendingUntil = 0;
+    MRGDJLog(@"shuffle+: Listening modes gave no way to start the playlist; long-press the shuffle button instead");
+}
+@end
+
+// Shuffle came on (or the track changed) after a Shuffle+ pick from the sheet.
+static void pendingCheck(NSString *context) {
+    if (sPendingUntil <= 0 || CACurrentMediaTime() > sPendingUntil) return;
+    if (!shufflable(context) || MRGPlayerShuffleState() != 1) return;
+    sPendingUntil = 0;
+    enterPlus(context);
+}
+
+static void addPlusRow(UIViewController *sheet) {
+    if (!sArmed || !sheet.viewIfLoaded) return;
+    MRGPlusModeRow *mine = objc_getAssociatedObject(sheet, &kPlusRowKey);
+    if (mine.superview) { [mine refresh]; return; }
+    NSMutableArray<UIView *> *rows = [NSMutableArray array];
+    findRows(sheet.view, rows, 0);
+    if (!rows.count) return;
+    // Spotify's Shuffle row: the one without Smart Shuffle's Learn more button.
+    UIView *shuffleRow = rows.firstObject;
+    for (UIView *r in rows) {
+        __block BOOL learn = NO;
+        NSMutableArray *stack = [NSMutableArray arrayWithObject:r];
+        while (stack.count && !learn) { UIView *x = stack.lastObject; [stack removeLastObject]; if ([x.accessibilityIdentifier containsString:@"LearnMore"]) learn = YES; [stack addObjectsFromArray:x.subviews]; }
+        if (!learn) { shuffleRow = r; break; }
+    }
+    // The stack the rows are arranged in (the row itself or a wrapper of it).
+    UIView *last = rows.lastObject, *item = last;
+    UIStackView *stack = nil;
+    while (item.superview && item != sheet.view) {
+        if ([item.superview isKindOfClass:UIStackView.class] && [((UIStackView *)item.superview).arrangedSubviews containsObject:item]) { stack = (UIStackView *)item.superview; break; }
+        item = item.superview;
+    }
+    if (!stack) {
+        static BOOL said;
+        if (!said) { said = YES; MRGDJLog(@"shuffle+: the Listening modes rows aren't in a stack; no Shuffle+ row (long-press the shuffle button)"); }
+        return;
+    }
+    mine = [[MRGPlusModeRow alloc] initWithTemplate:shuffleRow];
+    mine.sheet = sheet;
+    mine.shuffleRow = shuffleRow;
+    mine.translatesAutoresizingMaskIntoConstraints = NO;
+    CGFloat h = MAX(56, MIN(96, shuffleRow.bounds.size.height));
+    [mine.heightAnchor constraintEqualToConstant:h].active = YES;
+    NSUInteger at = [stack.arrangedSubviews indexOfObject:item];
+    [stack insertArrangedSubview:mine atIndex:at == NSNotFound ? stack.arrangedSubviews.count : at + 1];
+    objc_setAssociatedObject(sheet, &kPlusRowKey, mine, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    MRGCrumb(@"listening modes: Shuffle+ row added (%lu rows)", (unsigned long)rows.count);
+    [sheet.view setNeedsLayout];
+}
+
+%group MRGShuffleModes
+%hook _TtC21SmartShuffle_CoreImpl28PlayModePickerViewController
+- (void)viewDidLayoutSubviews {
+    %orig;
+    @try { addPlusRow((UIViewController *)self); } @catch (NSException *e) { MRGDJLog(@"shuffle+: Listening modes row threw %@", e.reason); }
+}
+%end
+%end
+
 static void rearm(void) {
     BOOL was = sArmed;
     sArmed = MRGAddonInstalled(kAddon);
@@ -374,13 +618,19 @@ static void rearm(void) {
     MRGAddonRegister([MRGShuffleAddon new]);
     if (NSClassFromString(@"SPTEsperantoPlayer")) %init;
     if (MRGFragileHooksAllowed(@"Shuffle+ button")) %init(MRGShuffleButton);
+    if (NSClassFromString(@"_TtC21SmartShuffle_CoreImpl28PlayModePickerViewController") && MRGFragileHooksAllowed(@"Shuffle+ in Listening modes")) %init(MRGShuffleModes);
     dispatch_async(dispatch_get_main_queue(), ^{ rearm(); });
     NSNotificationCenter *nc = NSNotificationCenter.defaultCenter;
     [nc addObserverForName:MRGSettingsChangedNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) { rearm(); }];
     [nc addObserverForName:MRGPlayerTrackChangedNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
         remember(n.userInfo[@"uri"]);
+        @try { pendingCheck(MRGPlayerContextURI()); } @catch (NSException *e) {}
         // Something else started playing: Shuffle+ belonged to the playlist it was turned on for.
         if (sPlus && ![sPlusContext isEqualToString:MRGPlayerContextURI() ?: @""]) setPlus(NO, nil);
+    }];
+    [nc addObserverForName:MRGPlayerShuffleOnNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
+        NSString *context = [n.userInfo[@"context"] isKindOfClass:NSString.class] && [n.userInfo[@"context"] length] ? n.userInfo[@"context"] : MRGPlayerContextURI();
+        @try { pendingCheck(context); } @catch (NSException *e) {}
     }];
     [nc addObserverForName:MRGPlayerShuffleOffNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
         NSString *context = [n.userInfo[@"context"] isKindOfClass:NSString.class] ? n.userInfo[@"context"] : MRGPlayerContextURI();
