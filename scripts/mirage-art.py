@@ -1,338 +1,595 @@
 #!/usr/bin/env python3
-"""Mirage add-on art: one cohesive set of shop covers and row icons, drawn here and bundled into the dylib.
+"""Mirage add-on art: the shop covers and row icons, rendered here and compiled into the dylib.
 
   scripts/mirage-art.py [preview-dir]
 
 Writes mirage/Sources/Addons/MRGAddonArtData.m (the images as byte arrays, so the phone shows exactly what was
-previewed) and, with a preview dir, every PNG plus a contact sheet (sheet.png) there.
+previewed) and, with a preview dir, every image plus a contact sheet (sheet.png) there.
 
-The system: a deep ink ground with a faint 24 px dot grid and a little grain, everything else flat geometry on
-one grid (a 12-unit square stage centred right of middle), Mirage purple for the main shapes, lavender and white
-for detail, and exactly one secondary tone per add-on. No text, no glows, no photos.
+The style is the original Vinyl card's: a soft, out-of-focus mesh-gradient ground (deep indigo and purple melting
+into a warm tone) with one realistic, glossy, well-lit hero object in the middle, soft contact shadows, specular
+highlights and fine grain. Each add-on has its own palette and its own object.
 """
-import io, os, sys
+import io, math, os, sys
 import numpy as np
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OUT_C = os.path.join(ROOT, "mirage", "Sources", "Addons", "MRGAddonArtData.m")
-
-SS = 4                       # supersampling
-COVER = (1080, 608)          # 16:9, ≥ 3x of the widest shop card on a 390 pt phone
-ICON = 132                   # 44 pt @3x
-
-INK_TOP = (24, 18, 40)
-INK_BOTTOM = (11, 9, 19)
-PURPLE = (139, 92, 246)
-PURPLE_DEEP = (96, 58, 214)
-LAVENDER = (196, 181, 253)
-WHITE = (255, 255, 255)
-VINYL_BLACK = (14, 12, 20)
-
-SECOND = {
-    "vinyl":          (245, 177, 76),    # amber
-    "dynamic-colors": (255, 122, 107),   # coral
-    "playlist-tools": (45, 212, 191),    # teal
-    "genres":         (96, 165, 250),    # sky
-    "popup-lyrics":   (244, 114, 182),   # pink
-    "trash":          (248, 113, 113),   # red
-    "shuffle-plus":   (163, 230, 53),    # lime
-    "generic":        (196, 181, 253),
-}
+OUT_M = os.path.join(ROOT, "mirage", "Sources", "Addons", "MRGAddonArtData.m")
+W, H = 1080, 608          # 16:9 cover, 3x of a 360 pt card
+ICON = 132                # 44 pt @3x
+SS = 3                    # supersampling for shape masks
 IDS = ["vinyl", "dynamic-colors", "playlist-tools", "genres", "popup-lyrics", "trash", "shuffle-plus", "generic"]
 
 
-def a(c, alpha):
-    return tuple(c[:3]) + (int(round(alpha * 255)),)
+# ------------------------------------------------------------------ basics (float RGB in 0..1, masks HxW)
+
+def hexc(h):
+    h = h.lstrip("#")
+    return np.array([int(h[i:i + 2], 16) / 255.0 for i in (0, 2, 4)], np.float32)
 
 
-def vgrad(w, h, top, bottom):
-    t = np.linspace(0, 1, h)[:, None, None]
-    arr = np.array(top)[None, None, :] * (1 - t) + np.array(bottom)[None, None, :] * t
-    arr = np.repeat(arr, w, axis=1)
-    return Image.fromarray(arr.astype(np.uint8), "RGB").convert("RGBA")
+def box_blur_1d(a, r, axis):
+    if r < 1:
+        return a
+    n = a.shape[axis]
+    pad = [(0, 0)] * a.ndim
+    pad[axis] = (r + 1, r)
+    p = np.pad(a, pad, mode="edge")
+    c = np.cumsum(p, axis=axis, dtype=np.float64)
+    hi = np.take(c, np.arange(2 * r + 1, 2 * r + 1 + n), axis=axis)
+    lo = np.take(c, np.arange(0, n), axis=axis)
+    return ((hi - lo) / (2 * r + 1)).astype(np.float32)
+
+
+def blur(a, sigma):
+    """Gaussian blur (three box passes); big radii run on a downscaled copy."""
+    if sigma <= 0.3:
+        return a
+    scale = 1
+    while sigma / scale > 24 and min(a.shape[0], a.shape[1]) / (scale * 2) > 16:
+        scale *= 2
+    src = a
+    if scale > 1:
+        h, w = a.shape[:2]
+        src = resize(a, (max(1, w // scale), max(1, h // scale)))
+    s = sigma / scale
+    r = max(1, int(round(math.sqrt(12 * s * s / 3 + 1) / 2)))
+    out = src
+    for _ in range(3):
+        out = box_blur_1d(out, r, 0)
+        out = box_blur_1d(out, r, 1)
+    if scale > 1:
+        out = resize(out, (a.shape[1], a.shape[0]))
+    return out
+
+
+def resize(a, size):
+    w, h = size
+    if a.ndim == 2:
+        im = Image.fromarray(a.astype(np.float32), "F").resize((w, h), Image.BICUBIC)
+        return np.asarray(im, np.float32)
+    return np.stack([resize(a[..., i], size) for i in range(a.shape[2])], axis=-1)
+
+
+def mask(w, h, draw):
+    """A soft-edged shape mask drawn by `draw(d, k)` with coordinates multiplied by k (supersampled)."""
+    im = Image.new("L", (w * SS, h * SS), 0)
+    draw(ImageDraw.Draw(im), SS)
+    im = im.resize((w, h), Image.LANCZOS)
+    return np.asarray(im, np.float32) / 255.0
+
+
+def over(dst, color, m):
+    m = np.clip(m, 0, 1)[..., None]
+    return dst * (1 - m) + color * m
+
+
+def grid(w, h):
+    y, x = np.mgrid[0:h, 0:w].astype(np.float32)
+    return x, y
+
+
+def mesh(w, h, base, blobs, soften=0.0):
+    """A mesh gradient: colored gaussian blobs (x, y in 0..1, radius in 0..1 of the width, color, strength) blended
+    over a base, then softened."""
+    x, y = grid(w, h)
+    acc = np.zeros((h, w, 3), np.float32) + base
+    for bx, by, br, col, k in blobs:
+        d2 = ((x - bx * w) ** 2 + (y - by * h) ** 2) / (br * w) ** 2
+        wgt = np.exp(-d2 * 1.6)[..., None] * k
+        acc = acc * (1 - wgt) + hexc(col) * wgt
+    if soften:
+        acc = blur(acc, soften)
+    return acc
+
+
+def zones(w, h, base, blobs, soften=0.0, base_weight=0.02):
+    """A mesh gradient with distinct color zones: each point takes the weighted average of the blobs near it
+    (normalized, sharp falloff), so colors stay saturated instead of washing into each other; then softened."""
+    x, y = grid(w, h)
+    num = np.zeros((h, w, 3), np.float32) + hexc(base) * base_weight if isinstance(base, str) else base * base_weight
+    den = np.full((h, w), base_weight, np.float32)
+    for bx, by, br, col, k in blobs:
+        d2 = ((x - bx * w) ** 2 + (y - by * h) ** 2) / (br * w) ** 2
+        wgt = np.exp(-d2 * 2.5) * k
+        num += hexc(col) * wgt[..., None]
+        den += wgt
+    acc = num / den[..., None]
+    if soften:
+        acc = blur(acc, soften)
+    return acc
 
 
 def grain(img, amount, seed):
     rng = np.random.default_rng(seed)
-    n = rng.normal(0, 255 * amount, (img.height, img.width, 1))
-    arr = np.asarray(img).astype(np.float32)
-    arr[..., :3] = np.clip(arr[..., :3] + n, 0, 255)
-    return Image.fromarray(arr.astype(np.uint8), "RGBA")
+    n = rng.normal(0, amount, img.shape[:2]).astype(np.float32)[..., None]
+    return np.clip(img + n, 0, 1)
 
 
-class Pen:
-    """Draws on a supersampled RGBA layer in output pixel units."""
-
-    def __init__(self, w, h):
-        self.w, self.h = w, h
-        self.img = Image.new("RGBA", (w * SS, h * SS), (0, 0, 0, 0))
-
-    def layer(self):
-        return Pen(self.w, self.h)
-
-    def paste(self, other, opacity=1.0):
-        im = other.img
-        if opacity < 1:
-            alpha = im.getchannel("A").point(lambda v: int(v * opacity))
-            im = im.copy(); im.putalpha(alpha)
-        self.img = Image.alpha_composite(self.img, im)
-
-    def d(self):
-        return ImageDraw.Draw(self.img)
-
-    @staticmethod
-    def s(v):
-        return v * SS
-
-    def box(self, x, y, w, h):
-        return [self.s(x), self.s(y), self.s(x + w), self.s(y + h)]
-
-    def rrect(self, x, y, w, h, r, fill=None, outline=None, width=0):
-        self.d().rounded_rectangle(self.box(x, y, w, h), radius=self.s(r), fill=fill, outline=outline, width=int(self.s(width)))
-
-    def circle(self, cx, cy, r, fill=None, outline=None, width=0):
-        self.d().ellipse(self.box(cx - r, cy - r, 2 * r, 2 * r), fill=fill, outline=outline, width=int(self.s(width)))
-
-    def poly(self, pts, fill):
-        self.d().polygon([(self.s(x), self.s(y)) for x, y in pts], fill=fill)
-
-    def line(self, pts, fill, width, round_caps=True):
-        sp = [(self.s(x), self.s(y)) for x, y in pts]
-        self.d().line(sp, fill=fill, width=int(self.s(width)), joint="curve")
-        if round_caps:
-            r = width / 2
-            for x, y in (pts[0], pts[-1]):
-                self.circle(x, y, r, fill=fill)
-
-    def arc(self, cx, cy, r, start, end, fill, width):
-        self.d().arc(self.box(cx - r, cy - r, 2 * r, 2 * r), start, end, fill=fill, width=int(self.s(width)))
-
-    def result(self):
-        return self.img.resize((self.w, self.h), Image.LANCZOS)
+def shadow(img, m, sigma, opacity, dx=0, dy=0, color=(0, 0, 0)):
+    s = np.roll(np.roll(m, int(dy), axis=0), int(dx), axis=1)
+    s = blur(s, sigma) * opacity
+    return over(img, np.array(color, np.float32), s)
 
 
-# ---------------------------------------------------------------- glyphs (drawn in a unit box: x, y, size)
-
-def g_vinyl(p, x, y, s, sec, big=True):
-    cx, cy, r = x + s * 0.5, y + s * 0.5, s * 0.5
-    p.circle(cx, cy, r, fill=a(VINYL_BLACK, 1) if big else a(WHITE, 1))
-    groove = a(WHITE, 0.09) if big else a(PURPLE_DEEP, 0.35)
-    for k in (0.86, 0.74, 0.62):
-        p.circle(cx, cy, r * k, outline=groove, width=max(1.0, s * 0.012))
-    p.circle(cx, cy, r * 0.36, fill=a(LAVENDER if big else PURPLE_DEEP, 1))
-    p.circle(cx, cy, r * 0.08, fill=a(sec, 1))
+def vertical(h, w, top, bottom):
+    t = np.linspace(0, 1, h, dtype=np.float32)[:, None, None]
+    return np.repeat(top * (1 - t) + bottom * t, w, axis=1)
 
 
-def g_shuffle(p, x, y, s, c1, c2, width):
-    # two crossing paths that end in arrowheads, drawn as smooth polylines
-    def path(y0, y1):
-        pts = []
-        for i in range(41):
-            t = i / 40
-            e = t * t * (3 - 2 * t)
-            px = x + s * (0.05 + 0.72 * t)
-            py = y + s * (y0 + (y1 - y0) * e)
-            pts.append((px, py))
-        return pts
-    lo, hi = 0.74, 0.26
-    for (y0, y1, col) in ((lo, hi, c1), (hi, lo, c2)):
-        pts = path(y0, y1)
-        p.line(pts, fill=a(col, 1), width=width)
-        ex, ey = pts[-1]
-        hs = width * 1.9
-        p.poly([(ex + hs * 1.15, ey), (ex - hs * 0.2, ey - hs), (ex - hs * 0.2, ey + hs)], fill=a(col, 1))
+def to_image(a):
+    return Image.fromarray((np.clip(a, 0, 1) * 255 + 0.5).astype(np.uint8), "RGB")
 
 
-# ---------------------------------------------------------------- covers
-
-def stage(W, H):
-    """The shared grid: a square stage of side 0.62 H, centred at 0.58 W."""
-    side = H * 0.62
-    return W * 0.58 - side / 2, H / 2 - side / 2, side
+def rrect(x, y, w, h, r):
+    return lambda d, k: d.rounded_rectangle([x * k, y * k, (x + w) * k, (y + h) * k], radius=r * k, fill=255)
 
 
-def ground(W, H, sec, seed):
-    img = vgrad(W, H, INK_TOP, INK_BOTTOM)
-    p = Pen(W, H)
-    # the one big quiet shape every cover shares: a disc of the add-on's tone, low, off to the right
-    p.circle(W * 0.80, H * 0.98, H * 0.78, fill=a(sec, 0.07))
-    p.circle(W * 0.80, H * 0.98, H * 0.52, fill=a(sec, 0.05))
-    dots = p.layer()
-    step = 24
-    for gy in range(step // 2, H, step):
-        for gx in range(step // 2, W, step):
-            dots.circle(gx, gy, 1.1, fill=a(WHITE, 0.07))
-    p.paste(dots)
-    img = Image.alpha_composite(img, p.result())
+def ellipse(cx, cy, rx, ry=None):
+    ry = rx if ry is None else ry
+    return lambda d, k: d.ellipse([(cx - rx) * k, (cy - ry) * k, (cx + rx) * k, (cy + ry) * k], fill=255)
+
+
+def polygon(pts):
+    return lambda d, k: d.polygon([(px * k, py * k) for px, py in pts], fill=255)
+
+
+def stroke(pts, width):
+    def f(d, k):
+        sp = [(px * k, py * k) for px, py in pts]
+        d.line(sp, fill=255, width=int(width * k), joint="curve")
+        r = width * k / 2
+        for px, py in (sp[0], sp[-1]):
+            d.ellipse([px - r, py - r, px + r, py + r], fill=255)
+    return f
+
+
+def rotate_pts(pts, cx, cy, deg):
+    a = math.radians(deg)
+    c, s = math.cos(a), math.sin(a)
+    return [(cx + (px - cx) * c - (py - cy) * s, cy + (px - cx) * s + (py - cy) * c) for px, py in pts]
+
+
+def rrect_pts(x, y, w, h, r, n=10):
+    pts = []
+    for cx, cy, a0 in ((x + w - r, y + r, -90), (x + w - r, y + h - r, 0), (x + r, y + h - r, 90), (x + r, y + r, 180)):
+        for i in range(n + 1):
+            a = math.radians(a0 + 90 * i / n)
+            pts.append((cx + r * math.cos(a), cy + r * math.sin(a)))
+    return pts
+
+
+# ------------------------------------------------------------------ shared pieces
+
+def ground(pal, seed):
+    """The card's backdrop: the reference's dark, painterly mesh (near-black left, a color crown on top, a warm
+    glow low right)."""
+    a, b, c, d = pal["ground"]
+    img = mesh(W, H, hexc("#07060c"), [
+        (0.48, -0.10, 0.55, a, 0.95),
+        (0.95, 1.05, 0.70, b, 0.95),
+        (0.15, 1.10, 0.45, c, 0.35),
+        (0.85, 0.05, 0.35, d, 0.45),
+    ], soften=40)
+    x, y = grid(W, H)
+    # the left falls off to black, as in the reference
+    fall = np.clip(1 - x / (W * 0.55), 0, 1) ** 1.6 * 0.55
+    img = img * (1 - fall[..., None])
     return img
 
 
-def finish(img, seed):
-    img = grain(img, 0.012, seed)
-    W, H = img.size
-    p = Pen(W, H)
-    p.rrect(0.5, 0.5, W - 1, H - 1, 0, outline=a(WHITE, 0.06), width=1.5)
-    return Image.alpha_composite(img, p.result())
+def gloss_sheen(m, strength, angle=-35, width=0.55):
+    """A soft diagonal specular sheen inside a mask."""
+    x, y = grid(W, H)
+    a = math.radians(angle)
+    proj = (x * math.cos(a) + y * math.sin(a))
+    ys, xs = np.nonzero(m > 0.5)
+    if len(xs) == 0:
+        return np.zeros_like(m)
+    p0, p1 = np.percentile(proj[m > 0.5], [0, 100])
+    t = (proj - p0) / max(p1 - p0, 1)
+    band = np.exp(-((t - 0.18) / (width * 0.35)) ** 2) * strength
+    return band * m
 
 
-def shadow(img, pen, blur, opacity, dy):
-    """A soft drop shadow under the shapes on `pen` (used sparingly: one per cover)."""
-    sh = pen.result()
-    alpha = sh.getchannel("A").point(lambda v: int(v * opacity))
-    base = Image.new("RGBA", sh.size, (0, 0, 0, 255)); base.putalpha(alpha)
-    base = base.filter(ImageFilter.GaussianBlur(blur))
-    moved = Image.new("RGBA", sh.size, (0, 0, 0, 0)); moved.paste(base, (0, dy))
-    return Image.alpha_composite(img, moved)
+def inner_edge(m, sigma, strength):
+    """A bright rim just inside the shape (light catching the edge)."""
+    e = np.clip(m - blur(m, sigma), 0, 1) * 2.2
+    return np.clip(e, 0, 1) * strength
 
 
-def compose(img, pen, shadow_blur=18, shadow_op=0.45, dy=10):
-    img = shadow(img, pen, shadow_blur, shadow_op, dy)
-    return Image.alpha_composite(img, pen.result())
+def finish(img, seed, vignette=0.35):
+    x, y = grid(W, H)
+    d = np.sqrt(((x - W * 0.52) / W) ** 2 + ((y - H * 0.48) / H) ** 2)
+    v = np.clip((d - 0.30) / 0.45, 0, 1) ** 1.5 * vignette
+    img = img * (1 - v[..., None])
+    return grain(img, 0.012, seed)
 
 
-def cover_vinyl(W, H, sec):
-    x, y, s = stage(W, H)
-    p = Pen(W, H)
-    g_vinyl(p, x + s * 0.40, y + s * 0.06, s * 0.88, sec)
-    p.rrect(x - s * 0.16, y + s * 0.04, s * 0.92, s * 0.92, s * 0.04, fill=a(PURPLE, 1))
-    # sleeve detail: a lavender band and a small amber square, flat
-    p.rrect(x - s * 0.08, y + s * 0.74, s * 0.46, s * 0.05, s * 0.025, fill=a(LAVENDER, 0.9))
-    p.rrect(x - s * 0.08, y + s * 0.83, s * 0.26, s * 0.05, s * 0.025, fill=a(WHITE, 0.45))
-    p.rrect(x - s * 0.08, y + s * 0.12, s * 0.14, s * 0.14, s * 0.03, fill=a(sec, 1))
-    # the spin: a thin arc on the record's free side
-    p.arc(x + s * 0.84, y + s * 0.50, s * 0.56, -36, 36, fill=a(sec, 0.9), width=s * 0.022)
-    return p
+def soft_album(w, h, palette, seed):
+    """A sleeve's printed art: a big soft blurred gradient like the reference's."""
+    a, b, c, d = palette
+    art = zones(w, h, b, [
+        (0.15, 0.15, 0.55, a, 0.9),
+        (0.85, 0.10, 0.40, d, 0.7),
+        (0.55, 0.95, 0.55, c, 1.0),
+        (0.95, 0.80, 0.45, b, 0.6),
+        (0.50, 0.55, 0.35, c, 0.55),
+    ], soften=w * 0.06)
+    rng = np.random.default_rng(seed)
+    sparkle = (rng.random((h, w)) > 0.9993).astype(np.float32) * 0.35
+    return np.clip(art + sparkle[..., None], 0, 1)
 
 
-def cover_dynamic(W, H, sec):
-    x, y, s = stage(W, H)
-    p = Pen(W, H)
-    cs = s * 0.74
-    cx0, cy0 = x - s * 0.18, y + (s - cs) / 2
-    q = cs / 2
-    p.rrect(cx0, cy0, cs, cs, s * 0.05, fill=a(PURPLE_DEEP, 1))
-    # the cover in four flat blocks
-    blk = p.layer()
-    blk.rrect(cx0, cy0, cs, cs, s * 0.05, fill=a(PURPLE_DEEP, 1))
-    blk.poly([(cx0 + q, cy0), (cx0 + cs, cy0), (cx0 + cs, cy0 + q)], fill=a(sec, 1))
-    blk.circle(cx0 + q * 0.75, cy0 + q * 1.25, q * 0.55, fill=a(LAVENDER, 1))
-    blk.poly([(cx0 + q, cy0 + cs), (cx0 + cs, cy0 + q * 1.1), (cx0 + cs, cy0 + cs)], fill=a(PURPLE, 1))
-    p.paste(blk)
-    # → three swatches taken from it
-    sx = cx0 + cs + s * 0.16
-    r = s * 0.11
-    for i, col in enumerate((sec, PURPLE, LAVENDER)):
-        cyy = y + s * 0.22 + i * s * 0.28
-        p.circle(sx + r, cyy, r, fill=a(col, 1))
-        p.rrect(sx + r * 2 + s * 0.06, cyy - s * 0.022, s * 0.30 - i * s * 0.06, s * 0.044, s * 0.022, fill=a(WHITE, 0.28))
-    return p
+def place(img, layer, m, x0, y0):
+    """Composite a sub-image `layer` (h, w, 3) with mask `m` (full-size) at its offset."""
+    hh, ww = layer.shape[:2]
+    full = np.zeros_like(img)
+    ys, xs = slice(max(0, y0), min(H, y0 + hh)), slice(max(0, x0), min(W, x0 + ww))
+    full[ys, xs] = layer[ys.start - y0:ys.stop - y0, xs.start - x0:xs.stop - x0]
+    return over(img, full, m)
 
 
-def cover_playlist(W, H, sec):
-    x, y, s = stage(W, H)
-    p = Pen(W, H)
-    cw, ch = s * 1.25, s * 1.0
-    cx0, cy0 = x + s / 2 - cw / 2, y
-    p.rrect(cx0, cy0, cw, ch, s * 0.06, fill=a((32, 25, 54), 1))
-    rows = 4
-    rh = ch / rows
-    for i in range(rows):
-        ry = cy0 + i * rh
-        hl = i == 1
-        if hl:
-            p.rrect(cx0 + s * 0.04, ry + s * 0.03, cw - s * 0.08, rh - s * 0.06, s * 0.035, fill=a(PURPLE, 1))
-        art = s * 0.13
-        p.rrect(cx0 + s * 0.08, ry + (rh - art) / 2, art, art, s * 0.025, fill=a(sec if hl else LAVENDER, 1 if hl else 0.55))
-        p.rrect(cx0 + s * 0.28, ry + rh * 0.36, s * (0.50 - 0.06 * (i % 2)), s * 0.04, s * 0.02, fill=a(WHITE, 0.95 if hl else 0.55))
-        p.rrect(cx0 + s * 0.28, ry + rh * 0.58, s * 0.28, s * 0.032, s * 0.016, fill=a(WHITE, 0.6 if hl else 0.25))
-    # the tool: a round badge with a plus, on the card's corner
-    bx, by, br = cx0 + cw - s * 0.06, cy0 + ch - s * 0.06, s * 0.15
-    p.circle(bx, by, br, fill=a(sec, 1))
-    p.rrect(bx - br * 0.5, by - br * 0.09, br, br * 0.18, br * 0.09, fill=a(INK_BOTTOM, 1))
-    p.rrect(bx - br * 0.09, by - br * 0.5, br * 0.18, br, br * 0.09, fill=a(INK_BOTTOM, 1))
-    return p
+def sleeve(img, x, y, s, palette, seed, angle=0.0, shadow_op=0.75, radius=None, art_fn=None):
+    """A square album sleeve with soft blurred art, rounded corners, contact shadow, rim light and sheen."""
+    r = radius if radius is not None else s * 0.055
+    pts = rotate_pts(rrect_pts(x, y, s, s, r), x + s / 2, y + s / 2, angle)
+    m = mask(W, H, polygon(pts))
+    img = shadow(img, m, 26, shadow_op, dy=18)
+    img = shadow(img, m, 6, 0.35, dy=4)
+    n = int(round(s))
+    art = art_fn(n, n, seed) if art_fn else soft_album(n, n, palette, seed)
+    pad = int(n * 0.25)
+    art = np.pad(art, ((pad, pad), (pad, pad), (0, 0)), mode="edge")
+    big = Image.fromarray((art * 255).astype(np.uint8)).rotate(-angle, resample=Image.BICUBIC)
+    art = np.asarray(big, np.float32) / 255
+    ox, oy = int(x + s / 2 - art.shape[1] / 2), int(y + s / 2 - art.shape[0] / 2)
+    img = place(img, art, m, ox, oy)
+    img = over(img, np.ones(3, np.float32), gloss_sheen(m, 0.05, angle=-60))
+    img = over(img, np.ones(3, np.float32), inner_edge(m, 2.0, 0.22))
+    return img, m
 
 
-def cover_genres(W, H, sec):
-    x, y, s = stage(W, H)
-    p = Pen(W, H)
-    pills = [(0.00, 0.10, 0.86, PURPLE, WHITE), (0.22, 0.40, 0.70, sec, INK_BOTTOM), (0.06, 0.70, 0.98, (32, 25, 54), LAVENDER)]
-    for ox, oy, w, fill, mark in pills:
-        px, py, ph = x - s * 0.10 + ox * s, y + oy * s, s * 0.20
-        p.rrect(px, py, w * s, ph, ph / 2, fill=a(fill, 1))
-        # a tag hole and two "word" bars
-        p.circle(px + ph * 0.5, py + ph / 2, ph * 0.13, fill=a(mark, 0.85))
-        p.rrect(px + ph * 0.95, py + ph * 0.40, w * s * 0.42, ph * 0.20, ph * 0.10, fill=a(mark, 0.85))
-        p.rrect(px + ph * 0.95 + w * s * 0.46, py + ph * 0.40, w * s * 0.18, ph * 0.20, ph * 0.10, fill=a(mark, 0.45))
-    return p
+def record(img, cx, cy, R, label_palette, seed, label=0.36):
+    """A glossy black vinyl: grooves, a conic specular sweep, a gradient label and a spindle hole."""
+    x, y = grid(W, H)
+    m = mask(W, H, ellipse(cx, cy, R))
+    img = shadow(img, m, 24, 0.7, dy=14)
+    dx, dy = x - cx, y - cy
+    rr = np.sqrt(dx * dx + dy * dy) / R
+    ang = np.arctan2(dy, dx)
+    base = np.full((H, W, 3), 0.035, np.float32)
+    # grooves: fine rings plus a few wider gaps between "tracks"
+    fine = 0.5 + 0.5 * np.sin(rr * R * 0.9)
+    tracks = np.zeros_like(rr)
+    for t in (0.52, 0.64, 0.76, 0.88):
+        tracks += np.exp(-((rr - t) / 0.006) ** 2)
+    lum = 0.035 + fine * 0.012 + tracks * 0.10
+    # light sweeping across the grooves (two opposite lobes, like a lit record)
+    sweep = (np.cos(2 * (ang + 0.75)) * 0.5 + 0.5) ** 6 * 0.20 * np.clip((rr - 0.38) / 0.1, 0, 1)
+    lum = lum + sweep
+    disc = base * 0 + lum[..., None]
+    img = over(img, disc, m)
+    # outer rim
+    rim = np.exp(-((rr - 0.995) / 0.006) ** 2) * 0.35
+    img = over(img, np.ones(3, np.float32), rim * m)
+    # label
+    lr = R * label
+    lm = mask(W, H, ellipse(cx, cy, lr))
+    a, b, c, d = label_palette
+    lab = mesh(W, H, hexc(b), [(cx / W - 0.01, (cy - lr * 0.7) / H, lr / W * 1.3, a, 1.0),
+                               (cx / W, (cy + lr * 0.8) / H, lr / W * 1.2, c, 1.0)], soften=lr * 0.25)
+    img = over(img, lab, lm)
+    img = over(img, np.zeros(3, np.float32), mask(W, H, ellipse(cx, cy, R * 0.025)) * 0.9)
+    return img, m
 
 
-def cover_lyrics(W, H, sec):
-    x, y, s = stage(W, H)
-    p = Pen(W, H)
-    cw = s * 1.30
-    cx0 = x + s / 2 - cw / 2
-    # the feed below, pushed down: flat tiles
-    for i in range(3):
-        p.rrect(cx0 + i * (cw / 3 + s * 0.0) + s * 0.01, y + s * 0.70, cw / 3 - s * 0.04, s * 0.30, s * 0.04, fill=a((32, 25, 54), 1))
-    # the lyrics card: glass-like flat panel (lighter ink + thin rim), lines with the current one highlighted
-    p.rrect(cx0, y, cw, s * 0.60, s * 0.06, fill=a((44, 34, 76), 1), outline=a(WHITE, 0.10), width=1.5)
-    lines = [(0.12, 0.60, 0.30), (0.27, 0.86, 1.0), (0.42, 0.52, 0.30)]
-    for ly, lw, op in lines:
-        cur = op == 1.0
-        p.rrect(cx0 + s * 0.08, y + s * ly, cw * lw * 0.86, s * (0.07 if cur else 0.05), s * 0.03, fill=a(WHITE if cur else LAVENDER, 1 if cur else 0.35))
-    # the beat dot and progress under the current line
-    p.circle(cx0 + cw - s * 0.10, y + s * 0.305, s * 0.035, fill=a(sec, 1))
-    return p
+def tube(img, pts, width, color, light, shadow_op=0.6, seed=0):
+    """A glossy rounded tube along a path: shaded across its width, a specular line, a soft shadow."""
+    m = mask(W, H, stroke(pts, width))
+    img = shadow(img, m, width * 0.45, shadow_op, dy=width * 0.35)
+    core = mask(W, H, stroke(pts, width * 0.45))
+    body = blur(core, width * 0.22)
+    body = body / max(body.max(), 1e-3)
+    shade = hexc(color) * (0.55 + 0.45 * body[..., None])
+    img = over(img, shade, m)
+    hl_pts = [(px - width * 0.12, py - width * 0.16) for px, py in pts]
+    hl = blur(mask(W, H, stroke(hl_pts, width * 0.16)), width * 0.06) * m
+    img = over(img, hexc(light), hl * 0.85)
+    return img, m
 
 
-def cover_trash(W, H, sec):
-    x, y, s = stage(W, H)
-    p = Pen(W, H)
-    cw = s * 1.25
-    cx0 = x + s / 2 - cw / 2
-    rh = s * 0.24
-    for i in range(4):
-        ry = y + s * 0.02 + i * (rh + s * 0.02)
-        bad = i == 1
-        p.rrect(cx0, ry, cw, rh, s * 0.04, fill=a((32, 25, 54), 1) if not bad else a((48, 26, 40), 1))
-        art = rh * 0.62
-        p.rrect(cx0 + s * 0.05, ry + (rh - art) / 2, art, art, s * 0.02, fill=a(LAVENDER if not bad else sec, 0.5 if not bad else 0.9))
-        p.rrect(cx0 + s * 0.25, ry + rh * 0.40, s * 0.50, s * 0.045, s * 0.022, fill=a(WHITE, 0.25 if bad else 0.55))
-        if bad:
-            # struck through: the row's title crossed out in the tone
-            p.rrect(cx0 + s * 0.22, ry + rh * 0.46, s * 0.56, s * 0.03, s * 0.015, fill=a(sec, 1))
-    # the badge: a circle with a bar (no entry), on the struck row
-    bx, by, br = cx0 + cw - s * 0.14, y + s * 0.02 + (rh + s * 0.02) + rh / 2, s * 0.13
-    p.circle(bx, by, br, fill=a(sec, 1))
-    p.rrect(bx - br * 0.55, by - br * 0.11, br * 1.1, br * 0.22, br * 0.11, fill=a(INK_BOTTOM, 1))
-    return p
+def arrowhead(img, tip, direction, size, color, light):
+    ang = math.atan2(direction[1], direction[0])
+    c, s = math.cos(ang), math.sin(ang)
+    def P(u, v):
+        return (tip[0] + u * c - v * s, tip[1] + u * s + v * c)
+    pts = [P(size * 0.55, 0), P(-size * 0.55, -size * 0.62), P(-size * 0.30, 0), P(-size * 0.55, size * 0.62)]
+    m = blur(mask(W, H, polygon(pts)), 1.2)
+    img = shadow(img, m, size * 0.25, 0.6, dy=size * 0.18)
+    x, y = grid(W, H)
+    t = ((x - tip[0]) * -s + (y - tip[1]) * c) / size
+    shade = hexc(color) * (0.75 + 0.25 * np.clip(-t * 1.2 + 0.4, 0, 1))[..., None]
+    img = over(img, shade, m)
+    img = over(img, hexc(light), inner_edge(m, 3, 0.5))
+    return img
 
 
-def cover_shuffle(W, H, sec):
-    x, y, s = stage(W, H)
-    p = Pen(W, H)
-    g_shuffle(p, x - s * 0.12, y + s * 0.02, s * 1.05, PURPLE, sec, s * 0.075)
-    # the plus, on a lavender disc
-    bx, by, br = x + s * 1.02, y + s * 0.20, s * 0.13
-    p.circle(bx, by, br, fill=a(LAVENDER, 1))
-    p.rrect(bx - br * 0.5, by - br * 0.1, br, br * 0.2, br * 0.1, fill=a(INK_BOTTOM, 1))
-    p.rrect(bx - br * 0.1, by - br * 0.5, br * 0.2, br, br * 0.1, fill=a(INK_BOTTOM, 1))
-    # the spaced queue below: dots in alternating tones, never two of a kind together
-    for i in range(7):
-        col = [PURPLE, sec, LAVENDER][i % 3]
-        p.circle(x + s * (0.02 + i * 0.15), y + s * 0.98, s * 0.035, fill=a(col, 1))
-    return p
+def frosted(img, m, tint, amount=0.16, frost=14):
+    """Frosted glass: what's behind, blurred, lifted with a tint, a bright rim and a top sheen."""
+    behind = blur(img, frost)
+    glass = behind * (1 - amount) + hexc(tint) * amount
+    glass = glass + 0.06
+    out = over(img, np.clip(glass, 0, 1), m)
+    out = over(out, np.ones(3, np.float32), inner_edge(m, 2.5, 0.55))
+    return out
 
 
-def cover_generic(W, H, sec):
-    x, y, s = stage(W, H)
-    p = Pen(W, H)
-    u = s * 0.40
-    for i, (ox, oy, col) in enumerate(((0, 0, PURPLE), (1, 0, LAVENDER), (0, 1, (32, 25, 54)), (1, 1, PURPLE_DEEP))):
-        p.rrect(x + s * 0.08 + ox * (u + s * 0.04), y + s * 0.08 + oy * (u + s * 0.04), u, u, s * 0.06, fill=a(col, 1))
-    return p
+# ------------------------------------------------------------------ the covers
+
+PAL = {
+    "vinyl":          {"ground": ("#3a1d66", "#6e2a44", "#1a1240", "#4a2058"), "art": ("#9a8fb0", "#7a3fa6", "#ff6f61", "#3d5bd8")},
+    "dynamic-colors": {"ground": ("#1f3c7a", "#7a2f3a", "#0f2a4a", "#3a2270"), "art": ("#ffb35c", "#e0457b", "#ff6f61", "#7b5cff")},
+    "playlist-tools": {"ground": ("#163f63", "#3d2b78", "#0b2a3a", "#1f5a6a"), "art": ("#5ee7c7", "#2b6fd8", "#9b6cff", "#2dd4bf")},
+    "genres":         {"ground": ("#2a2f86", "#1f5a8a", "#140f3a", "#4b2a8a"), "art": ("#8fd3ff", "#5b6cff", "#c084fc", "#60a5fa")},
+    "popup-lyrics":   {"ground": ("#5a1f78", "#8a2a5a", "#221040", "#7a2a8a"), "art": ("#ff8fd0", "#9b4dff", "#ff6fa8", "#ffd1f0")},
+    "trash":          {"ground": ("#4a1830", "#7a2a2a", "#1a0f22", "#5a1f48"), "art": ("#ff9a8a", "#c2415c", "#ff6f61", "#ffc1b5")},
+    "shuffle-plus":   {"ground": ("#3a2478", "#2f5a3a", "#120f2a", "#4a2a8a"), "art": ("#c6f66b", "#6d3fe0", "#8bd43a", "#a78bfa")},
+    "generic":        {"ground": ("#33206e", "#5a2a6a", "#140f30", "#3d2a7a"), "art": ("#c4b5fd", "#8b5cf6", "#f0abfc", "#a78bfa")},
+}
+
+
+def vinyl_art(w, h, seed):
+    """The reference sleeve: mauve-grey top, a blue corner, a violet band, a salmon glow low in the middle and hot
+    pink at the bottom corners, all out of focus."""
+    art = zones(w, h, "#c42a86", [
+        (0.45, -0.05, 0.50, "#8e7f97", 1.0),
+        (0.10, 0.05, 0.30, "#8a7a95", 0.8),
+        (1.00, -0.02, 0.20, "#3456d4", 1.0),
+        (0.22, 0.36, 0.30, "#6e3aa8", 1.0),
+        (0.82, 0.38, 0.20, "#b87a8c", 0.8),
+        (0.50, 0.58, 0.24, "#d8687e", 0.9),
+        (0.00, 1.02, 0.36, "#f01e7a", 1.0),
+        (1.00, 1.02, 0.36, "#f01e7a", 1.0),
+        (0.50, 0.84, 0.34, "#ff7468", 1.3),
+    ], soften=w * 0.05)
+    rng = np.random.default_rng(seed)
+    sparkle = (rng.random((h, w)) > 0.9994).astype(np.float32) * 0.3
+    return np.clip(art + sparkle[..., None], 0, 1)
+
+
+def cover_vinyl():
+    p = PAL["vinyl"]
+    img = ground(p, 1)
+    s = H * 0.61
+    sx, sy = W * 0.255, H * 0.5 - s / 2 - 4
+    img, _ = record(img, sx + s * 0.98, sy + s / 2, H * 0.285, ("#3a5bd0", "#9a3fb0", "#f0207a", "#ff6f61"), 3, label=0.30)
+    img, _ = sleeve(img, sx, sy, s, None, 4, art_fn=vinyl_art)
+    return img
+
+
+def cover_dynamic():
+    p = PAL["dynamic-colors"]
+    img = ground(p, 2)
+    # the album on the left
+    s = H * 0.40
+    ax, ay = W * 0.20, H * 0.5 - s / 2
+    img, _ = sleeve(img, ax, ay, s, p["art"], 5, angle=-6)
+    # a beam from the album into a glass prism, fanning out into the album's colors
+    px, py, ps = W * 0.60, H * 0.53, H * 0.36
+    tri = [(px, py - ps * 0.62), (px - ps * 0.62, py + ps * 0.45), (px + ps * 0.62, py + ps * 0.45)]
+    beam_in = blur(mask(W, H, polygon([(ax + s * 0.9, H * 0.46), (px - ps * 0.30, py - ps * 0.02), (px - ps * 0.28, py + ps * 0.06), (ax + s * 0.9, H * 0.50)])), 3)
+    img = over(img, np.array([1, 0.95, 0.9], np.float32), beam_in * 0.55)
+    bands = ["#ffb35c", "#ff6f61", "#e0457b", "#9b4dff", "#5b8cff"]
+    ex = W * 0.96
+    fan = np.zeros((H, W, 3), np.float32)
+    fan_m = np.zeros((H, W), np.float32)
+    for i, col in enumerate(bands):
+        y0 = py + ps * 0.02 + i * 3
+        y1a, y1b = H * (0.36 + i * 0.07), H * (0.36 + (i + 1) * 0.07)
+        band = mask(W, H, polygon([(px + ps * 0.20, y0), (ex, y1a), (ex, y1b), (px + ps * 0.22, y0 + 5)]))
+        fan = fan + hexc(col) * band[..., None]
+        fan_m = np.maximum(fan_m, band)
+    fan = blur(fan, 9)
+    fan_m = blur(fan_m, 9)
+    x, y = grid(W, H)
+    falloff = np.clip(1 - (x - px) / (ex - px), 0, 1) ** 0.6
+    img = img + fan * (falloff * 0.8)[..., None]
+    img = np.clip(img, 0, 1)
+    m = mask(W, H, polygon(tri))
+    img = shadow(img, m, 26, 0.6, dy=18)
+    # thick glass: the background through it, lifted and tinted, a rainbow caught inside, bright facets
+    img = frosted(img, m, "#dfe4ff", amount=0.18, frost=10)
+    inside = zones(W, H, "#9aa6ff", [(px / W - 0.03, (py + ps * 0.25) / H, 0.06, "#ff8fa0", 1.0),
+                                     (px / W + 0.05, (py + ps * 0.2) / H, 0.06, "#8fb6ff", 1.0),
+                                     (px / W, (py - ps * 0.25) / H, 0.05, "#ffffff", 0.8)], soften=12)
+    img = over(img, inside, m * 0.30)
+    img = over(img, np.ones(3, np.float32), gloss_sheen(m, 0.28, angle=-70, width=0.3))
+    edge = np.clip(m - blur(m, 2.0), 0, 1) * 2.5
+    img = over(img, np.ones(3, np.float32), np.clip(edge, 0, 1) * 0.7)
+    # a faint inner facet line from the apex
+    facet = blur(mask(W, H, stroke([(px, py - ps * 0.58), (px + ps * 0.05, py + ps * 0.42)], 2)), 1.0)
+    img = over(img, np.ones(3, np.float32), facet * 0.25 * m)
+    return img
+
+
+def cover_playlist():
+    p = PAL["playlist-tools"]
+    img = ground(p, 3)
+    s = H * 0.50
+    cx, cy = W * 0.52, H * 0.50
+    pals = [("#2b6fd8", "#1f3c7a", "#5ee7c7", "#2dd4bf"), ("#9b6cff", "#3d2b78", "#ff8fd0", "#5b6cff"), p["art"]]
+    for i, (dxk, ang, pal) in enumerate(((-0.30, -12, pals[0]), (0.0, -3, pals[1]), (0.28, 7, pals[2]))):
+        x = cx + dxk * s - s / 2
+        y = cy - s / 2 + abs(dxk) * s * 0.10
+        img, _ = sleeve(img, x, y, s, pal, 10 + i, angle=ang, shadow_op=0.65)
+    return img
+
+
+def tag(img, cx, cy, w, h, angle, colors, seed):
+    """A glossy luggage-style tag: a rounded body with a cut corner side, an eyelet and a gradient finish."""
+    r = h * 0.22
+    body = [(cx - w / 2 + h * 0.35, cy - h / 2), (cx + w / 2 - r, cy - h / 2), (cx + w / 2, cy - h / 2 + r),
+            (cx + w / 2, cy + h / 2 - r), (cx + w / 2 - r, cy + h / 2), (cx - w / 2 + h * 0.35, cy + h / 2), (cx - w / 2, cy)]
+    pts = rotate_pts(body, cx, cy, angle)
+    m = blur(mask(W, H, polygon(pts)), 1.0)
+    hx, hy = rotate_pts([(cx - w / 2 + h * 0.42, cy)], cx, cy, angle)[0]
+    hole = mask(W, H, ellipse(hx, hy, h * 0.10))
+    m = np.clip(m - hole, 0, 1)
+    img = shadow(img, m, 18, 0.6, dy=12)
+    x, y = grid(W, H)
+    a = math.radians(angle + 90)
+    t = ((x - cx) * math.cos(a) + (y - cy) * math.sin(a)) / h + 0.5
+    t = np.clip(t, 0, 1)[..., None]
+    fill = hexc(colors[0]) * (1 - t) + hexc(colors[1]) * t
+    img = over(img, fill, m)
+    img = over(img, np.ones(3, np.float32), gloss_sheen(m, 0.30, angle=angle - 80, width=0.25))
+    img = over(img, np.ones(3, np.float32), inner_edge(m, 2.0, 0.45))
+    # eyelet ring
+    ring = np.clip(mask(W, H, ellipse(hx, hy, h * 0.15)) - mask(W, H, ellipse(hx, hy, h * 0.10)), 0, 1)
+    img = over(img, hexc("#e9e6f5"), ring * 0.9)
+    return img
+
+
+def cover_genres():
+    p = PAL["genres"]
+    img = ground(p, 4)
+    cx, cy = W * 0.52, H * 0.50
+    # a string through the eyelets
+    img = tag(img, cx + 10, cy + H * 0.17, W * 0.40, H * 0.20, 6, ("#c084fc", "#7c3aed"), 1)
+    img = tag(img, cx - 6, cy, W * 0.42, H * 0.20, -4, ("#8fd3ff", "#3b6fe0"), 2)
+    img = tag(img, cx + 18, cy - H * 0.18, W * 0.38, H * 0.20, -11, ("#a5b4fc", "#5b4dd6"), 3)
+    return img
+
+
+def cover_lyrics():
+    p = PAL["popup-lyrics"]
+    # brighter blobs so the frost has something to show
+    img = ground(p, 5)
+    # a painterly field behind the card, so the frost has color to soften
+    field = zones(W, H, "#2a0f3a", [(0.30, 0.30, 0.20, "#d63c8c", 1.0), (0.70, 0.70, 0.22, "#7b3fe0", 1.0),
+                                    (0.62, 0.25, 0.14, "#ff8a5c", 0.9), (0.40, 0.78, 0.16, "#5a2aa0", 0.8)], soften=50, base_weight=0.3)
+    x, y = grid(W, H)
+    fade = np.clip(1 - np.sqrt(((x - W * 0.5) / (W * 0.48)) ** 2 + ((y - H * 0.5) / (H * 0.62)) ** 2), 0, 1) ** 0.8
+    img = over(img, field, fade * 0.9)
+    cw, ch = W * 0.58, H * 0.50
+    x, y = W * 0.5 - cw / 2, H * 0.5 - ch / 2
+    m = mask(W, H, rrect(x, y, cw, ch, 34))
+    img = shadow(img, m, 30, 0.45, dy=18)
+    img = frosted(img, m, "#ffffff", amount=0.14, frost=26)
+    img = over(img, np.ones(3, np.float32), gloss_sheen(m, 0.08, angle=-80, width=0.4))
+    # lines: dim, the current one glowing, dim
+    lines = [(0.24, 0.52, 0.38, 14), (0.47, 0.80, 1.0, 22), (0.70, 0.62, 0.38, 14)]
+    for ly, lw, op, th in lines:
+        lm = mask(W, H, rrect(x + cw * 0.09, y + ch * ly - th / 2, cw * lw, th, th / 2))
+        if op == 1.0:
+            img = over(img, hexc("#ffd1f0"), blur(lm, 14) * 0.65)
+        img = over(img, np.ones(3, np.float32), lm * op)
+    return img
+
+
+def cover_trash():
+    p = PAL["trash"]
+    img = ground(p, 6)
+    cx, base = W * 0.52, H * 0.86
+    bw_top, bw_bot, bh = H * 0.50, H * 0.38, H * 0.56
+    top = base - bh
+    body = [(cx - bw_top / 2, top), (cx + bw_top / 2, top), (cx + bw_bot / 2, base), (cx - bw_bot / 2, base)]
+    m = blur(mask(W, H, polygon(body)), 1.0)
+    img = shadow(img, m, 28, 0.65, dy=18)
+    # the back wall, darker glass
+    img = frosted(img, m, "#3a1420", amount=0.30, frost=14)
+    # a sleeve dropped in, half inside
+    img, sm = sleeve(img, cx - H * 0.13, top - H * 0.20, H * 0.30, ("#ffc1b5", "#c2415c", "#ff6f61", "#7a2a8a"), 7, angle=16, shadow_op=0.45)
+    # the front glass over it (only the part inside the bin is seen through glass)
+    behind = img.copy()
+    img = frosted(img, m, "#ffc9c0", amount=0.16, frost=16)
+    for k in (-0.26, 0.0, 0.26):
+        rx0, rx1 = cx + k * bw_top, cx + k * bw_bot
+        rib = blur(mask(W, H, stroke([(rx0, top + bh * 0.12), (rx1, base - bh * 0.08)], 8)), 2.5)
+        img = over(img, np.ones(3, np.float32), rib * 0.22)
+    img = over(img, np.ones(3, np.float32), gloss_sheen(m, 0.16, angle=-75, width=0.3))
+    # the rim: a glossy rounded band across the open top
+    rim = mask(W, H, rrect(cx - bw_top / 2 - 10, top - 12, bw_top + 20, 24, 12))
+    img = shadow(img, rim, 8, 0.4, dy=5)
+    img = frosted(img, rim, "#ffe5e0", amount=0.35, frost=6)
+    img = over(img, np.ones(3, np.float32), gloss_sheen(rim, 0.35, angle=-85, width=0.2))
+    return img
+
+
+def smooth_path(p0, p1, n=60):
+    pts = []
+    for i in range(n + 1):
+        t = i / n
+        e = t * t * (3 - 2 * t)
+        pts.append((p0[0] + (p1[0] - p0[0]) * t, p0[1] + (p1[1] - p0[1]) * e))
+    return pts
+
+
+def cover_shuffle():
+    p = PAL["shuffle-plus"]
+    img = ground(p, 7)
+    x0, x1 = W * 0.27, W * 0.70
+    ylo, yhi = H * 0.70, H * 0.30
+    wdt = H * 0.085
+    a = smooth_path((x0, yhi), (x1, ylo))   # back arrow first (purple), then the front one (lime)
+    b = smooth_path((x0, ylo), (x1, yhi))
+    img, _ = tube(img, a, wdt, "#8b5cf6", "#e6dcff")
+    img = arrowhead(img, (x1 + wdt * 1.05, ylo), (1, 0), wdt * 2.3, "#8b5cf6", "#e6dcff")
+    img, _ = tube(img, b, wdt, "#a3e635", "#f4ffd6")
+    img = arrowhead(img, (x1 + wdt * 1.05, yhi), (1, 0), wdt * 2.3, "#a3e635", "#f4ffd6")
+    # the plus: a small glossy sphere
+    sx, sy, sr = W * 0.80, H * 0.18, H * 0.07
+    sm = mask(W, H, ellipse(sx, sy, sr))
+    img = shadow(img, sm, 12, 0.5, dy=8)
+    xg, yg = grid(W, H)
+    d = np.sqrt((xg - (sx - sr * 0.35)) ** 2 + (yg - (sy - sr * 0.35)) ** 2) / (sr * 1.6)
+    sph = hexc("#f2edff") * (1 - np.clip(d, 0, 1)[..., None] * 0.35)
+    img = over(img, sph, sm)
+    for (w_, h_) in ((sr * 1.0, sr * 0.24), (sr * 0.24, sr * 1.0)):
+        img = over(img, hexc("#5b3fd0"), mask(W, H, rrect(sx - w_ / 2, sy - h_ / 2, w_, h_, min(w_, h_) / 2)))
+    return img
+
+
+def cover_generic():
+    p = PAL["generic"]
+    img = ground(p, 8)
+    s = H * 0.46
+    x, y = W * 0.5 - s / 2, H * 0.5 - s / 2
+    m = mask(W, H, rrect(x, y, s, s, s * 0.24))
+    img = shadow(img, m, 26, 0.7, dy=18)
+    tile = mesh(W, H, hexc("#7c4dff"), [(0.45, 0.30, 0.18, "#c4b5fd", 0.9), (0.58, 0.75, 0.16, "#f0abfc", 0.7)], soften=10)
+    img = over(img, tile, m)
+    img = over(img, np.ones(3, np.float32), gloss_sheen(m, 0.25, angle=-70, width=0.3))
+    img = over(img, np.ones(3, np.float32), inner_edge(m, 2.5, 0.4))
+    # an embossed puzzle piece
+    u = s / 10
+    piece = np.clip(mask(W, H, rrect(x + 2.6 * u, y + 3.2 * u, 4.8 * u, 4.2 * u, u * 0.7)) +
+                    mask(W, H, ellipse(x + 5 * u, y + 3.0 * u, 1.0 * u)) + mask(W, H, ellipse(x + 7.5 * u, y + 5.3 * u, 1.0 * u)), 0, 1)
+    img = shadow(img, piece, 6, 0.4, dy=4)
+    img = over(img, hexc("#f7f2ff"), piece * 0.95)
+    return img
 
 
 COVERS = {"vinyl": cover_vinyl, "dynamic-colors": cover_dynamic, "playlist-tools": cover_playlist, "genres": cover_genres,
@@ -340,80 +597,90 @@ COVERS = {"vinyl": cover_vinyl, "dynamic-colors": cover_dynamic, "playlist-tools
 
 
 def render_cover(addon):
-    W, H = COVER
-    sec = SECOND[addon]
-    img = ground(W, H, sec, IDS.index(addon))
-    pen = COVERS[addon](W, H, sec)
-    img = compose(img, pen, shadow_blur=22, shadow_op=0.5, dy=12)
-    return finish(img, 100 + IDS.index(addon)).convert("RGB")
+    img = COVERS[addon]()
+    return to_image(finish(img, 100 + IDS.index(addon)))
 
 
-# ---------------------------------------------------------------- icons
+# ------------------------------------------------------------------ icons: a soft gradient tile with a glossy glyph
 
 def render_icon(addon):
-    n = ICON
-    sec = SECOND[addon]
-    tile = vgrad(n, n, (154, 110, 255), (104, 64, 222))
-    mask = Pen(n, n)
-    mask.rrect(0, 0, n, n, n * 0.235, fill=(255, 255, 255, 255))
-    m = mask.result().getchannel("A")
-    out = Image.new("RGBA", (n, n), (0, 0, 0, 0))
-    out.paste(tile, (0, 0), m)
-    p = Pen(n, n)
-    u = n / 12.0   # the icon grid: 12 units, glyphs live in units 3..9
-    W_ = a(WHITE, 1)
+    """Drawn at cover resolution in a square region and scaled down, so the glyph uses the same lighting."""
+    global W, H
+    saveW, saveH = W, H
+    n = 396
+    W, H = n, n
+    try:
+        a, b, c, d = PAL[addon]["art"]
+        tile = mesh(n, n, hexc(b), [(0.2, 0.1, 0.7, a, 0.8), (0.9, 0.95, 0.6, c, 0.7), (0.9, 0.1, 0.4, d, 0.4)], soften=24)
+        tile = tile * 0.82
+        m = mask(n, n, rrect(0, 0, n, n, n * 0.235))
+        img = np.zeros((n, n, 3), np.float32)
+        img = over(img, tile, m)
+        g = glyph_mask(addon, n)
+        img = shadow(img, g, 8, 0.45, dy=6)
+        lit = vertical(n, n, np.array([1, 1, 1], np.float32), np.array([0.86, 0.84, 0.95], np.float32))
+        img = over(img, lit, g)
+        img = over(img, np.ones(3, np.float32), gloss_sheen(g, 0.0))
+        # the tile's own gloss: a soft top highlight and a hairline rim
+        x, y = grid(n, n)
+        top = np.exp(-((y / n - 0.0) / 0.35) ** 2) * 0.16 * m
+        img = over(img, np.ones(3, np.float32), top)
+        img = over(img, np.ones(3, np.float32), inner_edge(m, 2.0, 0.35))
+        rgba = np.dstack([np.clip(img, 0, 1), m])
+        im = Image.fromarray((rgba * 255 + 0.5).astype(np.uint8), "RGBA")
+        return im.resize((ICON, ICON), Image.LANCZOS)
+    finally:
+        W, H = saveW, saveH
+
+
+def glyph_mask(addon, n):
+    u = n / 12
     if addon == "vinyl":
-        g_vinyl(p, 2.6 * u, 2.6 * u, 6.8 * u, sec, big=False)
-    elif addon == "dynamic-colors":
-        r = 1.45 * u
-        p.circle(4.6 * u, 4.7 * u, r, fill=W_)
-        p.circle(7.4 * u, 4.7 * u, r, fill=a(LAVENDER, 1))
-        p.circle(6.0 * u, 7.3 * u, r, fill=a(sec, 1))
-    elif addon == "playlist-tools":
-        for i in range(3):
-            yy = (3.4 + i * 2.0) * u
-            p.rrect(3.0 * u, yy, 1.2 * u, 1.2 * u, 0.3 * u, fill=W_)
-            p.rrect(4.9 * u, yy + 0.35 * u, (3.6 - 0.8 * (i == 2)) * u, 0.5 * u, 0.25 * u, fill=W_)
-        p.circle(8.4 * u, 8.4 * u, 1.35 * u, fill=a(sec, 1))
-        p.rrect(7.75 * u, 8.2 * u, 1.3 * u, 0.4 * u, 0.2 * u, fill=a(PURPLE_DEEP, 1))
-        p.rrect(8.2 * u, 7.75 * u, 0.4 * u, 1.3 * u, 0.2 * u, fill=a(PURPLE_DEEP, 1))
-    elif addon == "genres":
-        p.rrect(2.6 * u, 3.4 * u, 5.6 * u, 2.1 * u, 1.05 * u, fill=W_)
-        p.rrect(3.8 * u, 6.5 * u, 5.6 * u, 2.1 * u, 1.05 * u, fill=a(sec, 1))
-        p.circle(3.65 * u, 4.45 * u, 0.36 * u, fill=a(PURPLE_DEEP, 1))
-        p.circle(4.85 * u, 7.55 * u, 0.36 * u, fill=a(PURPLE_DEEP, 1))
-    elif addon == "popup-lyrics":
-        p.rrect(2.5 * u, 2.9 * u, 7.0 * u, 5.2 * u, 1.1 * u, fill=a(WHITE, 0.22), outline=a(WHITE, 0.9), width=0.32 * u)
-        p.rrect(3.6 * u, 4.2 * u, 3.6 * u, 0.55 * u, 0.27 * u, fill=a(WHITE, 0.55))
-        p.rrect(3.6 * u, 5.35 * u, 4.8 * u, 0.75 * u, 0.37 * u, fill=W_)
-        p.rrect(3.6 * u, 6.7 * u, 2.6 * u, 0.55 * u, 0.27 * u, fill=a(WHITE, 0.55))
-        p.rrect(2.5 * u, 8.7 * u, 7.0 * u, 0.6 * u, 0.3 * u, fill=a(sec, 1))
-    elif addon == "trash":
-        p.circle(6 * u, 6 * u, 3.5 * u, fill=None, outline=W_, width=0.75 * u)
-        p.poly([(3.85 * u, 7.6 * u), (7.6 * u, 3.85 * u), (8.15 * u, 4.4 * u), (4.4 * u, 8.15 * u)], fill=a(sec, 1))
-    elif addon == "shuffle-plus":
-        g_shuffle(p, 2.4 * u, 2.7 * u, 6.4 * u, WHITE, sec, 0.78 * u)
-    else:
-        for ox, oy in ((0, 0), (1, 0), (0, 1), (1, 1)):
-            p.rrect((3.0 + ox * 3.2) * u, (3.0 + oy * 3.2) * u, 2.8 * u, 2.8 * u, 0.7 * u, fill=W_ if (ox + oy) % 2 == 0 else a(LAVENDER, 1))
-    out = Image.alpha_composite(out, p.result())
-    # a hairline inner rim keeps the tile crisp on dark rows
-    rim = Pen(n, n)
-    rim.rrect(0.5, 0.5, n - 1, n - 1, n * 0.235 - 0.5, outline=a(WHITE, 0.20), width=1.2)
-    return Image.alpha_composite(out, rim.result())
+        return np.clip(mask(n, n, ellipse(6 * u, 6 * u, 3.6 * u)) - mask(n, n, ellipse(6 * u, 6 * u, 1.1 * u)) * 0.55
+                       - mask(n, n, ellipse(6 * u, 6 * u, 0.3 * u)), 0, 1)
+    if addon == "dynamic-colors":
+        return mask(n, n, polygon([(6 * u, 2.6 * u), (2.6 * u, 8.9 * u), (9.4 * u, 8.9 * u)]))
+    if addon == "playlist-tools":
+        m = np.zeros((n, n), np.float32)
+        for i, yy in enumerate((2.8, 4.6, 6.4)):
+            m = np.maximum(m, mask(n, n, rrect((2.6 + i * 0.9) * u, yy * u, 5.2 * u, 3.0 * u, 0.6 * u)) * (0.55 + 0.22 * i))
+        return m
+    if addon == "genres":
+        return np.clip(mask(n, n, polygon([(3.9 * u, 3.4 * u), (9.2 * u, 3.4 * u), (9.2 * u, 8.6 * u), (3.9 * u, 8.6 * u), (2.4 * u, 6 * u)]))
+                       - mask(n, n, ellipse(4.1 * u, 6 * u, 0.55 * u)), 0, 1)
+    if addon == "popup-lyrics":
+        card = mask(n, n, rrect(2.4 * u, 3.0 * u, 7.2 * u, 6.0 * u, 1.3 * u)) * 0.38
+        lines = np.maximum.reduce([mask(n, n, rrect(3.4 * u, 4.3 * u, 3.6 * u, 0.6 * u, 0.3 * u)),
+                                   mask(n, n, rrect(3.4 * u, 5.7 * u, 5.2 * u, 0.9 * u, 0.45 * u)),
+                                   mask(n, n, rrect(3.4 * u, 7.3 * u, 3.0 * u, 0.6 * u, 0.3 * u))])
+        return np.maximum(card, lines)
+    if addon == "trash":
+        body = mask(n, n, polygon([(3.4 * u, 4.4 * u), (8.6 * u, 4.4 * u), (8.0 * u, 9.6 * u), (4.0 * u, 9.6 * u)]))
+        lid = mask(n, n, rrect(2.8 * u, 3.0 * u, 6.4 * u, 0.9 * u, 0.45 * u))
+        knob = mask(n, n, rrect(5.0 * u, 2.2 * u, 2.0 * u, 1.0 * u, 0.4 * u))
+        ribs = np.maximum.reduce([mask(n, n, rrect((4.9 + k * 1.1) * u, 5.4 * u, 0.4 * u, 3.2 * u, 0.2 * u)) for k in range(3)])
+        return np.clip(np.maximum.reduce([body, lid, knob]) - ribs * 0.5, 0, 1)
+    if addon == "shuffle-plus":
+        a = mask(n, n, stroke(smooth_path((2.6 * u, 3.8 * u), (7.4 * u, 8.2 * u), 30), 1.0 * u))
+        b = mask(n, n, stroke(smooth_path((2.6 * u, 8.2 * u), (7.4 * u, 3.8 * u), 30), 1.0 * u))
+        h1 = mask(n, n, polygon([(9.6 * u, 3.8 * u), (7.2 * u, 2.3 * u), (7.2 * u, 5.3 * u)]))
+        h2 = mask(n, n, polygon([(9.6 * u, 8.2 * u), (7.2 * u, 6.7 * u), (7.2 * u, 9.7 * u)]))
+        return np.maximum.reduce([a, b, h1, h2])
+    return np.clip(mask(n, n, rrect(3.0 * u, 4.0 * u, 6.0 * u, 5.2 * u, 0.9 * u)) + mask(n, n, ellipse(6 * u, 3.8 * u, 1.2 * u))
+                   + mask(n, n, ellipse(9.1 * u, 6.6 * u, 1.2 * u)), 0, 1)
 
 
-# ---------------------------------------------------------------- output
+# ------------------------------------------------------------------ output
+
+def jpeg_bytes(img):
+    b = io.BytesIO()
+    img.save(b, "JPEG", quality=90, optimize=True, subsampling=0)
+    return b.getvalue()
+
 
 def png_bytes(img):
     b = io.BytesIO()
     img.save(b, "PNG", optimize=True)
-    return b.getvalue()
-
-
-def jpeg_bytes(img):
-    b = io.BytesIO()
-    img.save(b, "JPEG", quality=90, optimize=True, progressive=False, subsampling=0)
     return b.getvalue()
 
 
@@ -423,11 +690,13 @@ def c_name(addon, kind):
 
 def main():
     preview = sys.argv[1] if len(sys.argv) > 1 else None
+    only = sys.argv[2].split(",") if len(sys.argv) > 2 else None
     if preview:
         os.makedirs(preview, exist_ok=True)
-    blobs = []
-    covers, icons = {}, {}
+    blobs, covers, icons = [], {}, {}
     for addon in IDS:
+        if only and addon not in only:
+            continue
         cv, ic = render_cover(addon), render_icon(addon)
         covers[addon], icons[addon] = cv, ic
         blobs.append((addon, "cover", jpeg_bytes(cv)))
@@ -435,32 +704,33 @@ def main():
         if preview:
             cv.save(os.path.join(preview, "cover-%s.png" % addon))
             ic.save(os.path.join(preview, "icon-%s.png" % addon))
+        print("rendered", addon, flush=True)
+    if only:
+        return
     if preview:
         cw, chh = 540, 304
         sheet = Image.new("RGB", (cw * 2 + 60, (chh + 30) * 4 + 30 + 150), (5, 5, 8))
         for i, addon in enumerate(IDS):
-            im = covers[addon].resize((cw, chh), Image.LANCZOS)
-            sheet.paste(im, (20 + (i % 2) * (cw + 20), 20 + (i // 2) * (chh + 30)))
+            sheet.paste(covers[addon].resize((cw, chh), Image.LANCZOS), (20 + (i % 2) * (cw + 20), 20 + (i // 2) * (chh + 30)))
         for i, addon in enumerate(IDS):
             ic = icons[addon].resize((88, 88), Image.LANCZOS)
             sheet.paste(ic, (20 + i * 110, (chh + 30) * 4 + 40), ic)
         sheet.save(os.path.join(preview, "sheet.png"))
-    with open(OUT_C, "w") as f:
+    with open(OUT_M, "w") as f:
         f.write("// Generated by scripts/mirage-art.py: the add-on covers (JPEG) and icons (PNG). Do not edit by hand.\n")
         f.write("#include <stddef.h>\n\n")
         for addon, kind, data in blobs:
             name = c_name(addon, kind)
             f.write("static const unsigned char %s[] = {\n" % name)
-            for i in range(0, len(data), 20):
-                f.write("  " + ",".join(str(b) for b in data[i:i + 20]) + ",\n")
+            for i in range(0, len(data), 24):
+                f.write("  " + ",".join(str(x) for x in data[i:i + 24]) + ",\n")
             f.write("};\n")
         f.write("\ntypedef struct { const char *addon; const char *kind; const unsigned char *bytes; size_t length; } MRGArtBlob;\n")
         f.write("const MRGArtBlob MRGArtBlobs[] = {\n")
         for addon, kind, data in blobs:
             f.write('  {"%s", "%s", %s, sizeof(%s)},\n' % (addon, kind, c_name(addon, kind), c_name(addon, kind)))
         f.write("};\nconst size_t MRGArtBlobCount = %d;\n" % len(blobs))
-    total = sum(len(d) for _, _, d in blobs)
-    print("wrote %s (%d images, %.0f KB)" % (OUT_C, len(blobs), total / 1024))
+    print("wrote %s (%d images, %.0f KB)" % (OUT_M, len(blobs), sum(len(d) for _, _, d in blobs) / 1024))
 
 
 if __name__ == "__main__":
