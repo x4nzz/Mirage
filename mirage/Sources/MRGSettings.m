@@ -12,6 +12,7 @@
 #import "MRGKeychain.h"
 #import "MRGChatView.h"
 #import "MRGAddons.h"
+#import "Addons/MRGSaver.h"
 #import <PhotosUI/PhotosUI.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <objc/runtime.h>
@@ -21,7 +22,7 @@
 // and is registered as conforming at launch, or presented when the protocol is missing.
 static BOOL sg_pageConforms;
 
-typedef NS_ENUM(NSInteger, MRGSection) { MRGSecBackgrounds, MRGSecShop, MRGSecDJ, MRGSecAbout, MRGSecCount };
+typedef NS_ENUM(NSInteger, MRGSection) { MRGSecBackgrounds, MRGSecShop, MRGSecDJ, MRGSecSaver, MRGSecAbout, MRGSecCount };
 typedef NS_ENUM(NSInteger, MRGBgSection) { MRGBgPreview, MRGBgMedia, MRGBgLibrary, MRGBgLook, MRGBgScreens, MRGBgAssign, MRGBgCount };
 
 @interface MRGSettingsController : UITableViewController <PHPickerViewControllerDelegate, UIDocumentPickerDelegate>
@@ -115,6 +116,7 @@ static const CGFloat kBottomChrome = 150;
         case MRGSecBackgrounds: return 1;
         case MRGSecShop: return 1;
         case MRGSecDJ: return 1;
+        case MRGSecSaver: return 1;
         case MRGSecAbout: return 2;
     }
     return 0;
@@ -123,7 +125,7 @@ static const CGFloat kBottomChrome = 150;
 - (NSString *)tableView:(UITableView *)t titleForHeaderInSection:(NSInteger)s {
     if (self.djOnly) return s < (NSInteger)djGroupTitles().count ? djGroupTitles()[s] : nil;
     if (self.bgOnly) return @[@"Backgrounds", @"Media", @"Saved", @"Look", @"Show on", @"Per page"][s];
-    return @[@"Backgrounds", @"Add-on Shop", @"AI DJ", @"About"][s];
+    return @[@"Backgrounds", @"Add-on Shop", @"AI DJ", @"Settings", @"About"][s];
 }
 
 - (NSString *)tableView:(UITableView *)t titleForFooterInSection:(NSInteger)s {
@@ -152,6 +154,7 @@ static const CGFloat kBottomChrome = 150;
     }
     switch (s) {
         case MRGSecBackgrounds: return @"Pictures, video and where they show live on the Backgrounds page. What you already set is kept.";
+        case MRGSecSaver: return @"Export or import every Mirage setting, or keep named presets on this iPhone. API keys are never included.";
         case MRGSecDJ:
             return @"Voice, personality, provider, chat and the DJ's other settings are on the AI DJ page. Bring your own key: OpenAI, Gemini (Google AI Studio keys, AQ.… or AIza…), Anthropic, OpenRouter, Groq, xAI, Perplexity, Cerebras, Fireworks, Together, DeepSeek or Mistral. The key stays in this phone's keychain. Privacy: only track and artist names (what's playing, what you played, the queue around it), what you type, and answers from your on-phone listening history that a chat question needs are sent to your provider. Voice: iPhone voices, your provider's voices, or ElevenLabs with its own key. On Spotify Free, Spotify may shuffle the set and its skip limit still applies.";
         case MRGSecAbout: return @"Mirage is free software under the GPL-3.0, built on Vitrine (github.com/meownyaaa/vitrine), itself a fork of Chroma by skopevoj (spoti.pw, up to v0.21.1).";
@@ -526,6 +529,11 @@ static NSString *ip3(NSInteger row) { return row == 3 ? @"Voice" : row == 4 ? @"
             c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
             return c;
         }
+        case MRGSecSaver: {
+            UITableViewCell *c = [self actionCell:@"Save & load settings" symbol:@"square.and.arrow.up" destructive:NO enabled:YES];
+            c.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+            return c;
+        }
         case MRGSecDJ: {
             UITableViewCell *c = [self actionCell:@"AI DJ" symbol:@"waveform.and.mic" destructive:NO enabled:YES];
             MRGProvider provider = MRGAIProvider();
@@ -578,6 +586,7 @@ static NSString *ip3(NSInteger row) { return row == 3 ? @"Voice" : row == 4 ? @"
         return;
     }
     if (ip.section == MRGSecBackgrounds) { MRGShowBackgroundSettings(self); return; }
+    if (ip.section == MRGSecSaver) { MRGPushPage(self, MRGSaverPage()); return; }
     if (ip.section == MRGSecDJ) { MRGShowDJSettings(self); return; }
     if (ip.section == MRGSecShop) { MRGPushPage(self, MRGAddonShopPage()); return; }
 }
