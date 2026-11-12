@@ -19,7 +19,7 @@
 #import <dlfcn.h>
 
 static NSString *const kAddon = @"popup-lyrics";
-static char kShelfKey, kInsetKey, kWatchKey;
+static char kShelfKey;
 
 typedef NSArray *(*LinesFn)(NSString *);
 typedef NSInteger (*LeadFn)(NSArray *, NSInteger);
@@ -385,84 +385,96 @@ static UICollectionView *feedIn(UIView *page) {
     return best;
 }
 
-// The extra top inset Mirage put on the feed, and the inset the feed had when Mirage last set it. When Spotify sets
-// its own inset again (it does on some layouts), that is taken as the new base and the room is added back on top.
-@interface MRGFeedRoom : NSObject
-@property (nonatomic) CGFloat ours, lastSet;
-@property (nonatomic) BOOL busy;
-@property (nonatomic, weak) UICollectionView *feed;
-@end
-@implementation MRGFeedRoom
-- (void)observeValueForKeyPath:(NSString *)key ofObject:(id)object change:(NSDictionary *)change context:(void *)ctx {
-    if (self.busy || !self.feed) return;
-    MRGShelfLayout(self.feed, NO);
+// The room is added inside the feed's own contentInset accessors (MRGPopupLyrics.x): the setter adds it, the getter
+// takes it back off. Spotify keeps setting the inset it wants (on every layout of the page) and always reads back
+// exactly that, so nobody fights over the value. 0.6.2 watched the inset with KVO and set it again whenever Spotify
+// did; each set laid the page out again, Spotify set its inset again, and Home could spin in that loop.
+static char kRoomKey;
+static __unsafe_unretained Class sFeedClass;
+
+CGFloat MRGShelfRoom(UIScrollView *list) {
+    if (!sFeedClass || [list class] != sFeedClass) return 0;
+    NSNumber *room = objc_getAssociatedObject(list, &kRoomKey);
+    return room ? room.doubleValue : 0;
 }
-@end
+
+static void setRoom(UICollectionView *feed, CGFloat room) {
+    objc_setAssociatedObject(feed, &kRoomKey, room > 0 ? @(room) : nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+
+static CGPoint shelfCenter(CGFloat width, CGFloat want) {
+    CGFloat h = cardHeight();
+    // Closed: parked just above the first shelf, out of sight.
+    return CGPointMake(width / 2, want > 0 ? -want + kTopGap + h / 2 : -kBottomGap - h / 2);
+}
 
 void MRGShelfLayout(UICollectionView *feed, BOOL animated) {
     if (!feed) return;
-    MRGFeedRoom *room = objc_getAssociatedObject(feed, &kInsetKey);
     MRGLyricsShelf *shelf = objc_getAssociatedObject(feed, &kShelfKey);
-    if (!room) {
-        if (!shelf) return;
-        room = [MRGFeedRoom new];
-        room.feed = feed;
-        objc_setAssociatedObject(feed, &kInsetKey, room, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        @try { [feed addObserver:room forKeyPath:@"contentInset" options:0 context:NULL]; objc_setAssociatedObject(feed, &kWatchKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC); } @catch (NSException *e) {}
-    }
-    if (room.busy) return;
-    room.busy = YES;
     @try {
         CGFloat want = (shelf && shelf.wantsRoom && MRGAddonInstalled(kAddon)) ? sectionHeight() : 0;
-        UIEdgeInsets inset = feed.contentInset;
-        BOOL spotifyReset = room.lastSet != 0 && fabs(inset.top - room.lastSet) > 0.5;
-        CGFloat base = spotifyReset ? inset.top : inset.top - room.ours;
+        CGFloat have = MRGShelfRoom(feed);
         CGFloat width = feed.bounds.size.width;
         if (shelf) {
-            CGFloat h = cardHeight();
-            shelf.bounds = CGRectMake(0, 0, MAX(100, width - 32), h);
-            CGPoint center = CGPointMake(width / 2, -want + kTopGap + h / 2);
-            if (want <= 0) center.y = -kBottomGap - h / 2;   // closed: parked just above the first shelf, out of sight
-            if (!animated) shelf.center = center;
+            CGRect bounds = CGRectMake(0, 0, MAX(100, width - 32), cardHeight());
+            if (!CGRectEqualToRect(shelf.bounds, bounds)) shelf.bounds = bounds;
             if (shelf.superview != feed) [feed addSubview:shelf];
         }
-        if (spotifyReset || fabs(room.ours - want) > 0.5) {
-            CGFloat delta = want - (spotifyReset ? 0 : room.ours);
-            BOOL atTop = feed.contentOffset.y <= -feed.adjustedContentInset.top + 2;
-            inset.top = base + want;
-            room.ours = want;
-            void (^change)(void) = ^{
-                feed.contentInset = inset;
-                // At the top the room opens in view and pushes the shelves down; scrolled away, nothing on screen moves.
-                if (atTop) feed.contentOffset = CGPointMake(feed.contentOffset.x, -feed.adjustedContentInset.top);
-                if (shelf) {
-                    CGFloat h = cardHeight();
-                    shelf.center = CGPointMake(width / 2, want > 0 ? -want + kTopGap + h / 2 : -kBottomGap - h / 2);
-                    shelf.alpha = want > 0 ? 1 : 0;
-                }
-            };
-            if (animated && !lowPower() && feed.window && fabs(delta) > 0.5)
-                [UIView animateWithDuration:0.55 delay:0 usingSpringWithDamping:0.9 initialSpringVelocity:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:change completion:nil];
-            else [UIView performWithoutAnimation:change];
-        } else if (shelf) {
-            shelf.alpha = want > 0 ? 1 : 0;
+        if (fabs(want - have) <= 0.5) {
+            if (shelf) {
+                CGPoint c = shelfCenter(width, want);
+                if (!CGPointEqualToPoint(shelf.center, c)) shelf.center = c;
+                CGFloat alpha = want > 0 ? 1 : 0;
+                if (shelf.alpha != alpha) shelf.alpha = alpha;
+            }
+            return;
         }
-        room.lastSet = feed.contentInset.top;
+        BOOL atTop = feed.contentOffset.y <= -feed.adjustedContentInset.top + 2;
+        UIEdgeInsets base = feed.contentInset;   // Spotify's own inset (the getter leaves the room out)
+        setRoom(feed, want);
+        void (^change)(void) = ^{
+            feed.contentInset = base;            // the setter adds the new room
+            // At the top the room opens in view and pushes the shelves down; scrolled away, nothing on screen moves.
+            if (atTop) feed.contentOffset = CGPointMake(feed.contentOffset.x, -feed.adjustedContentInset.top);
+            if (shelf) {
+                shelf.center = shelfCenter(width, want);
+                shelf.alpha = want > 0 ? 1 : 0;
+            }
+        };
+        if (animated && !lowPower() && feed.window)
+            [UIView animateWithDuration:0.55 delay:0 usingSpringWithDamping:0.9 initialSpringVelocity:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:change completion:nil];
+        else [UIView performWithoutAnimation:change];
     } @catch (NSException *e) {
         MRGDJLog(@"pop-up lyrics: feed layout threw %@", e.reason);
     }
-    room.busy = NO;
 }
 
 static NSHashTable<UIView *> *sPages;
 
+// The page's feed, found once and remembered weakly (the search walks up to 600 views; it used to run on every
+// layout pass of Home). With the add-on off and no shelf ever made, nothing is searched at all.
+@interface MRGFeedBox : NSObject
+@property (nonatomic, weak) id value;
+@end
+@implementation MRGFeedBox
+@end
+static char kFeedKey;
+
 void MRGPopupPlace(UIView *page) {
     if (![page isKindOfClass:UIView.class]) return;
-    UICollectionView *feed = feedIn(page);
-    if (!feed) return;
+    MRGFeedBox *box = objc_getAssociatedObject(page, &kFeedKey);
+    UICollectionView *feed = box.value;
+    if (!feed || ![feed isDescendantOfView:page]) {
+        if (!box && !MRGAddonInstalled(kAddon)) return;
+        feed = feedIn(page);
+        if (!feed) return;
+        if (!box) { box = [MRGFeedBox new]; objc_setAssociatedObject(page, &kFeedKey, box, OBJC_ASSOCIATION_RETAIN_NONATOMIC); }
+        box.value = feed;
+    }
     MRGLyricsShelf *shelf = objc_getAssociatedObject(feed, &kShelfKey);
     if (!shelf) {
         if (!MRGAddonInstalled(kAddon)) return;
+        sFeedClass = [feed class];
         if (!sPages) sPages = [NSHashTable weakObjectsHashTable];
         [sPages addObject:page];
         shelf = [MRGLyricsShelf new];
