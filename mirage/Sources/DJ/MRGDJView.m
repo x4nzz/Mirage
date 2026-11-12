@@ -1,5 +1,6 @@
 #import "MRGDJView.h"
 #import "MRGDJ.h"
+#import "MRGDJListen.h"
 #import "MRGAI.h"
 #import "MRGPlayer.h"
 #import "MRGSpotifyWeb.h"
@@ -348,7 +349,14 @@ static UILabel *makeLabel(CGFloat size, UIFontWeight w, UIColor *color, NSIntege
     UIImageView *_nowArt;
     UIButton *_go, *_stop;
     UITextField *_field;
-    UIButton *_send;
+    UIButton *_send, *_mic;
+    UIControl *_voiceBox;          // 0.6.7: what was heard, sent after 3 s unless tapped to edit
+    UILabel *_voiceText, *_voiceHint;
+    UIView *_voiceBar;
+    NSLayoutConstraint *_voiceBarWidth;
+    NSTimer *_voiceTimer;
+    CFTimeInterval _voiceSendAt;
+    NSString *_heard;
     UIActivityIndicatorView *_spinner;
     UIScrollView *_scroll;
     UIStackView *_list;
@@ -482,12 +490,24 @@ static UILabel *makeLabel(CGFloat size, UIFontWeight w, UIColor *color, NSIntege
     [_send addTarget:self action:@selector(sendRequest) forControlEvents:UIControlEventTouchUpInside];
     _send.accessibilityLabel = @"Send request";
     _send.translatesAutoresizingMaskIntoConstraints = NO;
+    // Hold to talk: listens while held, the transcript shows under the field when let go.
+    _mic = [UIButton systemButtonWithImage:[UIImage systemImageNamed:@"mic.fill" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:17 weight:UIImageSymbolWeightSemibold]] target:nil action:nil];
+    _mic.tintColor = UIColor.whiteColor;
+    _mic.accessibilityLabel = @"Hold to talk to the DJ";
+    _mic.translatesAutoresizingMaskIntoConstraints = NO;
+    [_mic addTarget:self action:@selector(micDown) forControlEvents:UIControlEventTouchDown];
+    [_mic addTarget:self action:@selector(micUp) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside | UIControlEventTouchCancel];
     [fieldGlass.contentView addSubview:_field];
+    [fieldGlass.contentView addSubview:_mic];
     [fieldGlass.contentView addSubview:_send];
     [NSLayoutConstraint activateConstraints:@[
         [fieldGlass.heightAnchor constraintEqualToConstant:50],
         [_field.leadingAnchor constraintEqualToAnchor:fieldGlass.contentView.leadingAnchor constant:20],
-        [_field.trailingAnchor constraintEqualToAnchor:_send.leadingAnchor constant:-10],
+        [_field.trailingAnchor constraintEqualToAnchor:_mic.leadingAnchor constant:-6],
+        [_mic.trailingAnchor constraintEqualToAnchor:_send.leadingAnchor constant:-6],
+        [_mic.centerYAnchor constraintEqualToAnchor:fieldGlass.contentView.centerYAnchor],
+        [_mic.widthAnchor constraintEqualToConstant:40],
+        [_mic.heightAnchor constraintEqualToConstant:40],
         [_field.topAnchor constraintEqualToAnchor:fieldGlass.contentView.topAnchor],
         [_field.bottomAnchor constraintEqualToAnchor:fieldGlass.contentView.bottomAnchor],
         [_send.trailingAnchor constraintEqualToAnchor:fieldGlass.contentView.trailingAnchor constant:-8],
@@ -497,6 +517,7 @@ static UILabel *makeLabel(CGFloat size, UIFontWeight w, UIColor *color, NSIntege
     ]];
 
     _error = makeLabel(13, UIFontWeightMedium, [UIColor colorWithRed:1 green:0.45 blue:0.45 alpha:1], 0);
+    [self buildVoiceBox];
 
     _listTitle = makeLabel(20, UIFontWeightBold, UIColor.whiteColor, 1);
     _list = [UIStackView new];
@@ -506,11 +527,12 @@ static UILabel *makeLabel(CGFloat size, UIFontWeight w, UIColor *color, NSIntege
 
     _privacy = makeLabel(12, UIFontWeightRegular, [UIColor colorWithWhite:1 alpha:0.4], 0);
 
-    UIStackView *stack = [[UIStackView alloc] initWithArrangedSubviews:@[head, card, buttons, fieldGlass, _error, _listTitle, _list, _empty, _privacy]];
+    UIStackView *stack = [[UIStackView alloc] initWithArrangedSubviews:@[head, card, buttons, fieldGlass, _voiceBox, _error, _listTitle, _list, _empty, _privacy]];
     stack.axis = UILayoutConstraintAxisVertical;
     stack.spacing = 14;
     [stack setCustomSpacing:18 afterView:head];
     [stack setCustomSpacing:26 afterView:fieldGlass];
+    [stack setCustomSpacing:26 afterView:_voiceBox];
     [stack setCustomSpacing:26 afterView:_error];
     [stack setCustomSpacing:8 afterView:_listTitle];
     [stack setCustomSpacing:24 afterView:_list];
@@ -565,7 +587,123 @@ static UILabel *makeLabel(CGFloat size, UIFontWeight w, UIColor *color, NSIntege
     return box;
 }
 
-- (void)dealloc { [NSNotificationCenter.defaultCenter removeObserver:self]; }
+- (void)dealloc { [_voiceTimer invalidate]; [NSNotificationCenter.defaultCenter removeObserver:self]; }
+
+#pragma mark - talking to the DJ (0.6.7)
+
+- (void)buildVoiceBox {
+    _voiceBox = [UIControl new];
+    _voiceBox.backgroundColor = [UIColor colorWithWhite:1 alpha:0.08];
+    _voiceBox.layer.cornerRadius = 18;
+    _voiceBox.layer.cornerCurve = kCACornerCurveContinuous;
+    _voiceBox.clipsToBounds = YES;
+    _voiceBox.hidden = YES;
+    _voiceBox.accessibilityHint = @"Tap to edit before it's sent";
+    [_voiceBox addTarget:self action:@selector(editHeard) forControlEvents:UIControlEventTouchUpInside];
+    _voiceText = makeLabel(16, UIFontWeightSemibold, UIColor.whiteColor, 0);
+    _voiceHint = makeLabel(12, UIFontWeightMedium, kSecondary(), 1);
+    _voiceBar = [UIView new];
+    _voiceBar.backgroundColor = kGreen();
+    for (UIView *v in @[_voiceText, _voiceHint, _voiceBar]) { v.translatesAutoresizingMaskIntoConstraints = NO; v.userInteractionEnabled = NO; [_voiceBox addSubview:v]; }
+    _voiceBarWidth = [_voiceBar.widthAnchor constraintEqualToConstant:0];
+    [NSLayoutConstraint activateConstraints:@[
+        [_voiceText.topAnchor constraintEqualToAnchor:_voiceBox.topAnchor constant:14],
+        [_voiceText.leadingAnchor constraintEqualToAnchor:_voiceBox.leadingAnchor constant:16],
+        [_voiceText.trailingAnchor constraintEqualToAnchor:_voiceBox.trailingAnchor constant:-16],
+        [_voiceHint.topAnchor constraintEqualToAnchor:_voiceText.bottomAnchor constant:6],
+        [_voiceHint.leadingAnchor constraintEqualToAnchor:_voiceText.leadingAnchor],
+        [_voiceHint.trailingAnchor constraintEqualToAnchor:_voiceText.trailingAnchor],
+        [_voiceHint.bottomAnchor constraintEqualToAnchor:_voiceBox.bottomAnchor constant:-16],
+        [_voiceBar.leadingAnchor constraintEqualToAnchor:_voiceBox.leadingAnchor],
+        [_voiceBar.bottomAnchor constraintEqualToAnchor:_voiceBox.bottomAnchor],
+        [_voiceBar.heightAnchor constraintEqualToConstant:3],
+        _voiceBarWidth,
+    ]];
+}
+
+- (void)showVoice:(NSString *)text hint:(NSString *)hint {
+    _voiceText.text = text;
+    _voiceHint.text = hint;
+    if (_voiceBox.hidden) {
+        _voiceBox.hidden = NO;
+        _voiceBox.alpha = 0;
+        [UIView animateWithDuration:0.2 animations:^{ self->_voiceBox.alpha = 1; }];
+    }
+}
+
+- (void)hideVoice {
+    [_voiceTimer invalidate];
+    _voiceTimer = nil;
+    _heard = nil;
+    _voiceBarWidth.constant = 0;
+    _voiceBox.hidden = YES;
+    _mic.tintColor = UIColor.whiteColor;
+}
+
+- (void)micDown {
+    if (MRGAIProvider() == MRGProviderNone) { [self showVoice:@"Add your AI provider's key first." hint:@"Mirage settings → AI DJ"]; return; }
+    [self.view endEditing:YES];
+    [_voiceTimer invalidate];
+    _voiceTimer = nil;
+    _heard = nil;
+    _voiceBarWidth.constant = 0;
+    [[UIImpactFeedbackGenerator new] impactOccurred];
+    _mic.tintColor = kGreen();
+    [self showVoice:@"Listening…" hint:@"Let go when you're done"];
+    __weak MRGDJSheet *weak = self;
+    [MRGDJListener.shared startWithPartial:^(NSString *text) {
+        MRGDJSheet *s = weak;
+        if (s && text.length) s->_voiceText.text = text;
+    } failed:^(NSString *why) {
+        MRGDJSheet *s = weak;
+        if (!s) return;
+        s->_mic.tintColor = UIColor.whiteColor;
+        [s showVoice:why hint:@"Tap to type instead"];
+    }];
+}
+
+- (void)micUp {
+    if (!MRGDJListener.shared.isListening) { _mic.tintColor = UIColor.whiteColor; return; }
+    _mic.tintColor = UIColor.whiteColor;
+    _voiceHint.text = @"Getting that…";
+    __weak MRGDJSheet *weak = self;
+    [MRGDJListener.shared finish:^(NSString *text) {
+        MRGDJSheet *s = weak;
+        if (!s) return;
+        if (!text.length) { [s showVoice:@"Didn't catch that." hint:@"Hold the mic and try again"]; return; }
+        [s heard:text];
+    }];
+}
+
+// What was heard, with a 3 s countdown to sending; a tap stops it and puts the words in the field to edit.
+- (void)heard:(NSString *)text {
+    _heard = [text copy];
+    [self showVoice:[NSString stringWithFormat:@"“%@”", text] hint:@"Sending in 3 s · tap to edit"];
+    [self.view layoutIfNeeded];
+    _voiceSendAt = CACurrentMediaTime() + 3;
+    [_voiceTimer invalidate];
+    __weak MRGDJSheet *weak = self;
+    _voiceTimer = [NSTimer scheduledTimerWithTimeInterval:0.1 repeats:YES block:^(NSTimer *t) {
+        MRGDJSheet *s = weak;
+        if (!s) { [t invalidate]; return; }
+        double left = s->_voiceSendAt - CACurrentMediaTime();
+        CGFloat w = s->_voiceBox.bounds.size.width;
+        s->_voiceBarWidth.constant = round(w * MIN(1, MAX(0, 1 - left / 3)));
+        if (left > 0) { s->_voiceHint.text = [NSString stringWithFormat:@"Sending in %.0f s · tap to edit", ceil(left)]; return; }
+        [t invalidate];
+        s->_voiceTimer = nil;
+        NSString *send = s->_heard;
+        [s hideVoice];
+        if (send.length) [MRGDJ.shared handleVoiceRequest:send];
+    }];
+}
+
+- (void)editHeard {
+    NSString *text = _heard;
+    [self hideVoice];
+    if (text.length) _field.text = text;
+    [_field becomeFirstResponder];
+}
 
 // The last line clear of the home indicator at every detent: the window's bottom inset, whatever the sheet reports.
 - (void)viewDidLayoutSubviews {
@@ -648,8 +786,9 @@ static UILabel *makeLabel(CGFloat size, UIFontWeight w, UIColor *color, NSIntege
     _stop.hidden = !(playing || thinking);
     _field.enabled = hasKey;
     _send.enabled = hasKey;
+    _mic.enabled = hasKey;
     NSString *provider = hasKey ? MRGProviderName(MRGAIProvider()) : @"your AI provider";
-    _privacy.text = [NSString stringWithFormat:@"Only track and artist names and what you type here go to %@. Playback is Spotify's own.", provider];
+    _privacy.text = [NSString stringWithFormat:@"Only track and artist names and what you type or say here go to %@ (speech is turned into text on the phone when it can). Playback is Spotify's own.", provider];
 }
 
 - (void)rowTapped:(MRGDJRow *)row {

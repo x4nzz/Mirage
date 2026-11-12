@@ -1278,6 +1278,35 @@ static NSInteger intentOf(NSString *text) {
     MRGArtistInfo(who, withInfo);
 }
 
+// 0.6.7: a spoken request (hold-to-talk on the DJ sheet). It goes the same way as a typed one (a vibe or an artist
+// re-seeds the picks and lines them up after the song on; "skip" or "now" acts at once; a question gets an answer),
+// and the DJ says a short line back that only repeats what it's doing, never a fact about the music.
+- (void)handleVoiceRequest:(NSString *)text {
+    NSString *t = [text ?: @"" stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if (!t.length) return;
+    NSString *cmd = [[t lowercaseString] stringByTrimmingCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@" .!?"]];
+    MRGDJLog(@"voice in: \"%@\"", t.length > 80 ? [[t substringToIndex:80] stringByAppendingString:@"…"] : t);
+    if (rx(cmd, @"^(?:yo |hey |dj |ok )*(switch it up|switch up|change it up|mix it up|something (else|different))$")) {
+        if (MRGAIProvider() == MRGProviderNone) { [self fail:@"Add your AI provider's API key in Mirage settings first."]; return; }
+        [self switchItUp];
+        [self sayBack:@"Switching it up. New picks after this song."];
+        return;
+    }
+    NSInteger intent = intentOf(t);
+    BOOL control = rx(cmd, @"^(skip|skip this|skip it|skip this song|next|next song|pause|stop|resume|unpause|back|go back|previous|last song)$");
+    [self handleInput:t];
+    if (control || intent != 0 || _state != MRGDJThinking) return;   // questions answer out loud on their own
+    BOOL now = MRGDJWantsNow(t) || !MRGPlayerIsPlaying();
+    [self sayBack:now ? @"On it." : @"Got it. That's coming up after this song."];
+}
+
+- (void)sayBack:(NSString *)line {
+    if (!line.length || MRGPlayerIsAd()) return;
+    _currentLine = [line copy];
+    [self changed];
+    [self speak:line];
+}
+
 - (void)switchItUp {
     NSMutableString *r = [NSMutableString stringWithString:@"Switch it up: take the set in a clearly different direction from the last one (another genre, scene, era or energy; different artists), still something this listener would love."];
     if (_plan.length) [r appendFormat:@" The last set's plan was: \"%@\" — do not repeat that direction.", _plan];

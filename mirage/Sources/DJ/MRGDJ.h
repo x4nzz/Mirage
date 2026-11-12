@@ -49,7 +49,8 @@ typedef NS_ENUM(NSInteger, MRGDJQueueState) {
 // The vibe box: a music request starts a set; a question (or chat) is answered (DJ card, spoken, and in the chat)
 // without touching the music.
 - (void)handleInput:(NSString *)text;
-- (void)switchItUp;                              // a new set in a clearly different direction from the last plan
+- (void)switchItUp;
+- (void)handleVoiceRequest:(NSString *)text;     // 0.6.7: a spoken request, with a short spoken reply                              // a new set in a clearly different direction from the last plan
 // Plays these tracks (dictionaries with uri, title, artist, optional image/line) as a DJ set, for the chat.
 - (void)playTracks:(NSArray<NSDictionary *> *)tracks intro:(NSString *)intro;
 // Plays a playlist, album, artist or Liked Songs as Spotify's own context (the DJ set steps aside, the queue is

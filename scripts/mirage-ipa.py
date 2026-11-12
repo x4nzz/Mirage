@@ -95,6 +95,12 @@ def cmd_overlay(ipa, overlay_path, out):
     overlay['NSBonjourServices'] = services
     if app.get('NSLocalNetworkUsageDescription'):
         overlay.pop('NSLocalNetworkUsageDescription', None)
+    # Mirage 0.6.7: talking to the DJ. Speech recognition needs its own usage string (iOS ends the app without one);
+    # Spotify's microphone string is kept when it has one.
+    if not app.get('NSSpeechRecognitionUsageDescription'):
+        overlay['NSSpeechRecognitionUsageDescription'] = 'Mirage turns what you say to the DJ into a request, on your phone when it can.'
+    if not app.get('NSMicrophoneUsageDescription'):
+        overlay['NSMicrophoneUsageDescription'] = 'Mirage listens while you hold the mic to talk to the DJ.'
     plistlib.dump(overlay, open(out, 'wb'))
 
 
