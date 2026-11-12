@@ -258,6 +258,8 @@ static NSString *artistCandidate(NSString *request, NSInteger *mode, BOOL *plain
 
 @implementation MRGDJ {
     NSString *_segmentName;   // the current segment's name, when the set is one
+    NSString *_nextSegmentName;   // the name the next start takes (Switch it up's segments)
+    NSUInteger _segmentCursor;    // which segment Switch it up goes to next
     NSMutableSet<NSString *> *_spoken;
     NSString *_origRequest;                // the listener's own last request, kept through Switch it up
     NSInteger _talkCount;                  // tracks of this set the DJ arrived at, for the talk setting
@@ -360,6 +362,7 @@ static NSString *artistCandidate(NSString *request, NSInteger *mode, BOOL *plain
     _status = nil;
     // Nothing of this set's direction is remembered for the next Start.
     _origRequest = nil; _plan = nil; _lastRequest = nil;
+    _segmentName = nil; _nextSegmentName = nil;
     _focus = nil; _focusTracks = nil; _focusRelated = nil; _focusMode = 0; _focusCrew = nil; _focusPlain = NO;
     _pool = nil; _poolKey = nil;
     [MRGVoiceSpeaker.shared stop];
@@ -994,6 +997,8 @@ static const NSInteger kCatalogMax = 80;
 - (void)startWithRequest:(NSString *)request {
     if (MRGAIProvider() == MRGProviderNone) { [self fail:@"Add your AI provider's API key in Mirage settings first."]; return; }
     NSUInteger gen = ++_generation;
+    _segmentName = _nextSegmentName;
+    _nextSegmentName = nil;
     _lastRequest = [request copy];
     if (![request hasPrefix:@"Switch it up:"]) { _origRequest = [request copy]; _plan = nil; _pool = nil; _poolKey = nil; }
     MRGDJLog(@"start: %@ with %@ (%@)", request.length ? @"a request" : @"no request", MRGProviderName(MRGAIProvider()), MRGAIModel() ?: @"?");
@@ -1320,14 +1325,118 @@ static NSInteger intentOf(NSString *text) {
     [self speak:line];
 }
 
+// 0.6.8, Switch it up the way Spotify's DJ does it: each tap goes to the next segment, built from the listener's own
+// history where it can be: On repeat (the songs played most in the last four weeks), Throwbacks (songs once played a
+// lot, not for four months), New for you (artists close to the ones played lately that the history has never seen),
+// then a set in a clearly different direction. A segment without enough history (or without an AI key, for the
+// last two) is passed over. Every line in the history segments is a count or a date from the history itself.
 - (void)switchItUp {
+    if (_state == MRGDJThinking) return;
+    BOOL ai = MRGAIProvider() != MRGProviderNone;
+    for (int tries = 0; tries < 4; tries++) {
+        NSInteger kind = (NSInteger)(_segmentCursor++ % 4);
+        if (kind == 0 || kind == 1) {
+            NSString *intro = nil;
+            NSArray<MRGDJTrack *> *set = [self historySegment:kind intro:&intro];
+            if (set.count >= 3) { [self playSegment:set name:kind == 0 ? @"On repeat" : @"Throwbacks" intro:intro]; return; }
+            continue;
+        }
+        if (!ai) continue;
+        NSDictionary *taste = MRGHistoryTaste();
+        NSArray *recent = [taste[@"recentArtists"] isKindOfClass:NSArray.class] ? taste[@"recentArtists"] : @[];
+        if (kind == 2) {
+            if (!recent.count) continue;
+            NSArray *seeds = [recent subarrayWithRange:NSMakeRange(0, MIN((NSUInteger)5, recent.count))];
+            NSMutableString *r = [NSMutableString stringWithFormat:@"Switch it up: something new for you. Songs by artists close to the ones this listener plays most lately (%@) that they have never played: no artist from their history.", [seeds componentsJoinedByString:@", "]];
+            if (_origRequest.length && popularityCap(_origRequest)) [r appendFormat:@" Keep the hard constraints of their earlier request: \"%@\".", _origRequest];
+            _nextSegmentName = @"New for you";
+            [self startWithRequest:r];
+            return;
+        }
+        [self switchDirection];
+        return;
+    }
+    // Nothing to switch to (no history yet and no AI key): say so on the sheet rather than doing nothing.
+    [self fail:@"Play a few more songs (or add an AI key) so the DJ has something to switch to."];
+}
+
+- (void)switchDirection {
     NSMutableString *r = [NSMutableString stringWithString:@"Switch it up: take the set in a clearly different direction from the last one (another genre, scene, era or energy; different artists), still something this listener would love."];
     if (_plan.length) [r appendFormat:@" The last set's plan was: \"%@\" — do not repeat that direction.", _plan];
     // Only constraints like "underground" carry over; an earlier artist or vibe doesn't (it made Start replay Clairo).
     if (_origRequest.length && popularityCap(_origRequest)) [r appendFormat:@" Keep the hard constraints of their earlier request (like underground or an era): \"%@\".", _origRequest];
     NSDictionary *now = MRGNowPlaying();
     if (now[@"artist"]) [r appendFormat:@" On at the moment: \"%@\" by %@; start from there.", now[@"title"] ?: @"?", now[@"artist"]];
+    _nextSegmentName = @"Switching it up";
     [self startWithRequest:r];
+}
+
+static NSString *pick(NSArray<NSString *> *options, NSUInteger i) { return options[i % options.count]; }
+
+// The history's own songs for a segment, with lines that only say what the history says.
+- (NSArray<MRGDJTrack *> *)historySegment:(NSInteger)kind intro:(NSString **)intro {
+    NSDictionary *taste = MRGHistoryTaste();
+    NSArray *rows = taste[kind == 0 ? @"onRepeat" : @"throwbacks"];
+    if (![rows isKindOfClass:NSArray.class]) return @[];
+    NSDictionary *now = MRGNowPlaying();
+    NSString *nowURI = now[@"uri"] ?: @"";
+    NSMutableArray<MRGDJTrack *> *set = [NSMutableArray array];
+    NSMutableSet *seen = [NSMutableSet set];
+    NSString *thisYear = [NSString stringWithFormat:@"%ld", (long)[NSCalendar.currentCalendar component:NSCalendarUnitYear fromDate:NSDate.date]];
+    for (NSDictionary *row in rows) {
+        if (![row isKindOfClass:NSDictionary.class]) continue;
+        NSString *uri = [row[@"uri"] isKindOfClass:NSString.class] ? row[@"uri"] : nil;
+        if (![uri hasPrefix:@"spotify:track:"] || [uri isEqualToString:nowURI] || [seen containsObject:uri] || MRGTrashContains(uri)) continue;
+        [seen addObject:uri];
+        MRGDJTrack *t = [MRGDJTrack new];
+        t.uri = uri;
+        t.title = [row[@"title"] isKindOfClass:NSString.class] ? row[@"title"] : @"";
+        t.artist = [row[@"artist"] isKindOfClass:NSString.class] ? row[@"artist"] : @"";
+        long plays = (long)[row[@"plays"] integerValue];
+        NSUInteger n = set.count;
+        if (kind == 0) {
+            t.why = @"on repeat";
+            t.line = [NSString stringWithFormat:pick(@[@"You've played this one %ld times in the last four weeks.",
+                                                       @"%ld plays in four weeks. You know this one.",
+                                                       @"Another one you keep running back: %ld plays lately."], n), plays];
+        } else {
+            NSString *year = [row[@"year"] isKindOfClass:NSString.class] ? row[@"year"] : nil;
+            t.why = @"throwback";
+            if (year.length && ![year isEqualToString:thisYear])
+                t.line = [NSString stringWithFormat:pick(@[@"You haven't played this since %@.", @"Back to %@ for this one.", @"Last time you had this on was %@."], n), year];
+            else
+                t.line = [NSString stringWithFormat:pick(@[@"You played this %ld times, then it went quiet.", @"Haven't heard this from you in a while."], n), plays];
+        }
+        [set addObject:t];
+        if (set.count >= 12) break;
+    }
+    if (set.count >= 3 && intro) {
+        MRGDJTrack *first = set.firstObject;
+        *intro = kind == 0
+            ? [NSString stringWithFormat:@"Switching it up. Here's what you've had on repeat, starting with %@.", first.title]
+            : [NSString stringWithFormat:@"Switching it up. Throwbacks: songs you used to play a lot, starting with %@.", first.title];
+    }
+    return set;
+}
+
+// A segment's songs as a set, lined up after the song that is on (never cutting it off).
+- (void)playSegment:(NSArray<MRGDJTrack *> *)set name:(NSString *)name intro:(NSString *)intro {
+    NSUInteger gen = ++_generation;
+    [self quiet];
+    _error = nil;
+    _next = nil;
+    _fetchingNext = NO;
+    _focus = nil; _focusTracks = nil; _focusRelated = nil; _focusMode = 0; _focusCrew = nil; _focusPlain = NO;
+    _segmentName = [name copy];
+    _nextSegmentName = nil;
+    _plan = [NSString stringWithFormat:@"%@ from the listener's history", name];
+    _state = MRGDJThinking;
+    _afterCurrent = MRGNowPlaying() != nil && MRGPlayerIsPlaying();
+    _pendingAfter = NO;
+    _waitingURI = nil;
+    [self setStatusText:[name stringByAppendingString:@"…"]];
+    MRGDJLog(@"segment: %@, %lu songs from the history", name, (unsigned long)set.count);
+    [self playSet:set intro:intro generation:gen fresh:YES];
 }
 
 - (void)playTracks:(NSArray<NSDictionary *> *)tracks intro:(NSString *)intro {
@@ -1351,6 +1460,7 @@ static NSInteger intentOf(NSString *text) {
     _focus = nil; _focusTracks = nil; _focusRelated = nil; _focusMode = 0; _focusCrew = nil; _focusPlain = NO;
     _state = MRGDJThinking;
     _afterCurrent = NO;   // the chat's play tool: they asked to play these
+    _segmentName = nil;
     _pendingAfter = NO;
     MRGDJLog(@"chat: playing %lu tracks as a set", (unsigned long)set.count);
     [self playSet:set intro:intro generation:gen fresh:YES];
