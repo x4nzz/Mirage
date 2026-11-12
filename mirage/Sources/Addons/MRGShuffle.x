@@ -9,6 +9,7 @@
 #import "MRGPrefs.h"
 #import "MRGDiagnostics.h"
 #import <QuartzCore/QuartzCore.h>
+#import <objc/runtime.h>
 
 static NSString *const kAddon = @"shuffle-plus";
 static NSMutableArray<NSString *> *sRecent;
@@ -113,6 +114,7 @@ static void webAlbum(NSString *albumURI, void (^done)(NSArray<NSDictionary *> *,
 }
 
 static NSString *sAppliedContext;
+static BOOL sPlus;             // Shuffle+ is the shuffle button's current state (see below)
 static NSString *sQueuedFor;   // the context whose queue Shuffle+ filled, so turning shuffle (or Shuffle+) off can take it back
 static CFTimeInterval sAppliedAt;
 
@@ -137,7 +139,7 @@ static void applyShuffle(NSString *context) {
             for (NSDictionary *t in ordered) if ([t[@"uri"] isKindOfClass:NSString.class]) [uris addObject:t[@"uri"]];
             dispatch_async(dispatch_get_main_queue(), ^{
                 // Shuffle turned off, the add-on off or another playlist started while ordering: drop it.
-                if (!uris.count || !MRGAddonInstalled(kAddon) || ![context isEqualToString:MRGPlayerContextURI() ?: @""]) return;
+                if (!uris.count || !sPlus || !MRGAddonInstalled(kAddon) || ![context isEqualToString:MRGPlayerContextURI() ?: @""]) return;
                 MRGClearQueue(^(NSUInteger removed, NSString *clearError) {
                     MRGQueueTracks(uris, ^(BOOL ok, NSString *queueError) {
                         sQueuedFor = ok ? [context copy] : nil;
@@ -172,45 +174,215 @@ static void takeBackQueue(void) {
 - (NSString *)addonName { return @"Shuffle+"; }
 - (NSString *)addonCategory { return @"Playback"; }
 - (NSString *)addonVersion { return @"1.0"; }
-- (NSString *)addonDescription { return @"A shuffle for playlists and albums that doesn't play the same artist twice in a row and holds back songs you just heard. It uses Spotify's own queue."; }
+- (NSString *)addonDescription { return @"A fourth state on Spotify's shuffle button: after Shuffle (and Smart Shuffle), one more tap gives Shuffle+, marked with a +, which doesn't play the same artist twice in a row and holds back songs you just heard. Long-press the button for a menu. It uses Spotify's own queue."; }
 - (NSArray<MRGAddonSetting *> *)addonSettings {
     MRGAddonSetting *artist = [MRGAddonSetting toggle:@"artist" title:@"Separate the same artist" fallback:YES];
     MRGAddonSetting *recent = [MRGAddonSetting toggle:@"recent" title:@"Hold back recent songs" fallback:YES];
     MRGAddonSetting *window = [MRGAddonSetting slider:@"window" title:@"How many count as recent" min:5 max:40 fallback:15];
-    window.footer = @"Turn shuffle on while a playlist or album is playing. Spotify Free often refuses a queue and a chosen track, and its skip limit still applies. When the queue is refused, Spotify's own shuffle is left as it is.";
+    window.footer = @"Tap shuffle on a playlist or album until it shows the +, or long-press it and pick Shuffle+. Spotify Free often refuses a queue and a chosen track, and its skip limit still applies. When the queue is refused, Spotify's own shuffle is left as it is.";
     return @[artist, recent, window];
 }
 - (void)addonDidEnable {}
 - (void)addonDidDisable { takeBackQueue(); }
-- (NSString *)addonSummary { return avoidArtist() ? @"Artists separated" : @"On"; }
+- (NSString *)addonSummary { return sPlus ? @"Shuffling now" : (avoidArtist() ? @"Artists separated" : @"On"); }
 @end
 
+#pragma mark - Shuffle+ as a state of Spotify's shuffle button
+
+// Spotify's shuffle button cycles Off → Shuffle → Smart Shuffle (when offered) → Off. With the add-on on, Shuffle+
+// is a fourth state: the tap that would take shuffle back to Off lands on Shuffle+ instead (shuffle stays on and the
+// upcoming queue is Shuffle+'s), and the next tap goes to Off. The button gets a small "+" badge while it's on.
+//
+// The tap itself is watched on the button (Spotify names it Components.UI.ShuffleButton, on playlist, album and
+// player pages alike); what the tap did is read from the player's state, since Spotify's own button doesn't have
+// to go through setShufflingContext:. Long-press the button for a small menu (Shuffle+ / Spotify's shuffle / Off):
+// on accounts where Spotify keeps a playlist shuffled and the cycle never reaches Off, that is the way in.
+static NSString *const kShuffleButtonID = @"Components.UI.ShuffleButton";
+static BOOL sArmed;                    // the add-on is installed (cached for the UIControl hook)
+static NSString *sPlusContext;
+static CFTimeInterval sTapAt;          // a shuffle-button tap Spotify handled, and whether shuffle was on then
+static BOOL sTapFromOn;
+static BOOL sOwnSet;                   // our own setShufflingContext: in flight
+static NSHashTable<UIView *> *sButtons;
+static char kBadgeKey, kPressKey;
+
+static BOOL shufflable(NSString *context) { return [context hasPrefix:@"spotify:playlist:"] || [context hasPrefix:@"spotify:album:"]; }
+
+static void forceApply(NSString *context) {
+    sAppliedContext = nil;
+    applyShuffle(context);
+}
+
+static void badge(UIView *button) {
+    UIView *b = objc_getAssociatedObject(button, &kBadgeKey);
+    if (!sPlus) { b.hidden = YES; button.accessibilityValue = nil; return; }
+    if (!b) {
+        UIImageView *v = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"plus" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:7 weight:UIImageSymbolWeightBlack]]];
+        v.contentMode = UIViewContentModeCenter;
+        v.tintColor = UIColor.whiteColor;
+        v.userInteractionEnabled = NO;
+        v.layer.cornerRadius = 6.5;
+        v.layer.borderWidth = 1;
+        v.layer.borderColor = [UIColor colorWithWhite:0 alpha:0.35].CGColor;
+        v.accessibilityElementsHidden = YES;
+        objc_setAssociatedObject(button, &kBadgeKey, v, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        [button addSubview:v];
+        b = v;
+    }
+    b.backgroundColor = MRGAccent();
+    CGRect r = button.bounds;
+    b.frame = CGRectMake(CGRectGetMidX(r) + 5, CGRectGetMidY(r) - 15, 13, 13);
+    b.hidden = NO;
+    [button bringSubviewToFront:b];
+    button.accessibilityValue = @"Shuffle+";
+}
+
+static void badgeAll(void) {
+    for (UIView *button in sButtons.allObjects) if (button.window) badge(button);
+}
+
+static void setPlus(BOOL on, NSString *context) {
+    if (sPlus == on && (!on || [context isEqualToString:sPlusContext ?: @""])) { badgeAll(); return; }
+    sPlus = on;
+    sPlusContext = on ? [context copy] : nil;
+    MRGCrumb(@"shuffle+ state %@", on ? @"on" : @"off");
+    badgeAll();
+}
+
+static void enterPlus(NSString *context) {
+    if (!shufflable(context)) return;
+    setPlus(YES, context);
+    if (MRGPlayerShuffleState() != 1) {
+        sOwnSet = YES;
+        MRGPlayerSetShuffle(YES);
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ sOwnSet = NO; });
+    }
+    forceApply(context);
+    [[UIImpactFeedbackGenerator new] impactOccurred];
+}
+
+static void leavePlus(BOOL shuffleOff) {
+    setPlus(NO, nil);
+    takeBackQueue();
+    if (shuffleOff && MRGPlayerShuffleState() == 1) {
+        sOwnSet = YES;
+        MRGPlayerSetShuffle(NO);
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ sOwnSet = NO; });
+    }
+}
+
+@interface MRGShufflePress : NSObject
+@end
+@implementation MRGShufflePress
++ (instancetype)shared { static MRGShufflePress *p; if (!p) p = [MRGShufflePress new]; return p; }
+- (void)pressed:(UILongPressGestureRecognizer *)g {
+    if (g.state != UIGestureRecognizerStateBegan || !sArmed) return;
+    UIView *button = g.view;
+    UIViewController *top = button.window.rootViewController;
+    while (top.presentedViewController) top = top.presentedViewController;
+    if (!top) return;
+    NSString *context = MRGPlayerContextURI();
+    [[UIImpactFeedbackGenerator new] impactOccurred];
+    UIAlertController *menu = [UIAlertController alertControllerWithTitle:nil message:shufflable(context) ? nil : @"Shuffle+ works on playlists and albums." preferredStyle:UIAlertControllerStyleActionSheet];
+    if (shufflable(context))
+        [menu addAction:[UIAlertAction actionWithTitle:sPlus ? @"Shuffle+ ✓" : @"Shuffle+" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) { if (!sPlus) enterPlus(context); }]];
+    [menu addAction:[UIAlertAction actionWithTitle:@"Spotify's shuffle" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+        leavePlus(NO);
+        if (MRGPlayerShuffleState() != 1) MRGPlayerSetShuffle(YES);
+    }]];
+    [menu addAction:[UIAlertAction actionWithTitle:@"Shuffle off" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) { leavePlus(YES); if (MRGPlayerShuffleState() == 1) MRGPlayerSetShuffle(NO); }]];
+    [menu addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    menu.popoverPresentationController.sourceView = button;
+    menu.popoverPresentationController.sourceRect = button.bounds;
+    [top presentViewController:menu animated:YES completion:nil];
+}
+@end
+
+static void adoptButton(UIView *button) {
+    if (!button || [sButtons containsObject:button]) return;
+    if (!sButtons) sButtons = [NSHashTable weakObjectsHashTable];
+    [sButtons addObject:button];
+    if (!objc_getAssociatedObject(button, &kPressKey)) {
+        UILongPressGestureRecognizer *g = [[UILongPressGestureRecognizer alloc] initWithTarget:MRGShufflePress.shared action:@selector(pressed:)];
+        g.minimumPressDuration = 0.45;
+        [button addGestureRecognizer:g];
+        objc_setAssociatedObject(button, &kPressKey, g, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    badge(button);
+}
+
+%group MRGShuffleButton
+%hook UIControl
+- (void)sendAction:(SEL)action to:(id)target forEvent:(UIEvent *)event {
+    if (!sArmed || !event || ![self.accessibilityIdentifier isEqualToString:kShuffleButtonID]) { %orig; return; }
+    // One decision per tap, however many targets the button sends it to.
+    static __weak UIEvent *decided;
+    static CFTimeInterval decidedStamp;
+    static BOOL swallow;
+    if (event != decided || event.timestamp != decidedStamp) {
+        decided = event;
+        decidedStamp = event.timestamp;
+        swallow = NO;
+        @try {
+            adoptButton(self);
+            if (sPlus) {
+                // Shuffle+ → Off: Spotify doesn't see this tap (it would go to Smart Shuffle from "on").
+                swallow = YES;
+                MRGCrumb(@"shuffle button: Shuffle+ → off");
+                leavePlus(YES);
+                [[UISelectionFeedbackGenerator new] selectionChanged];
+            } else {
+                sTapAt = CACurrentMediaTime();
+                sTapFromOn = MRGPlayerShuffleState() == 1;
+            }
+        } @catch (NSException *e) { swallow = NO; }
+    }
+    if (!swallow) %orig;
+}
+%end
+%end
+
+// Off after a tap that started from on: Spotify's cycle reached Off, so this is where Shuffle+ comes in.
+static void shuffleWentOff(NSString *context) {
+    if (sOwnSet) return;
+    if (sPlus) { leavePlus(NO); return; }   // turned off some other way
+    takeBackQueue();
+    if (!sArmed || !sTapFromOn || CACurrentMediaTime() - sTapAt > 2.5 || !shufflable(context)) return;
+    sTapAt = 0;
+    MRGCrumb(@"shuffle button: cycle → Shuffle+");
+    enterPlus(context);
+}
+
 %hook SPTEsperantoPlayer
+// Only a turn-off is acted on here (from any caller but Mirage): Shuffle+ is entered from the button's cycle, never
+// just because shuffle came on.
 - (id)setShufflingContext:(BOOL)on {
     id result = %orig;
-    if (!on || !MRGAddonInstalled(kAddon)) return result;
-    NSString *context = MRGPlayerContextURI();
-    if ([context hasPrefix:@"spotify:playlist:"] || [context hasPrefix:@"spotify:album:"]) {
-        dispatch_async(dispatch_get_main_queue(), ^{ @try { applyShuffle(context); } @catch (NSException *e) { MRGDJLog(@"shuffle+: threw %@", e.reason); } });
-    }
+    if (!on && !sOwnSet && sPlus && sArmed) dispatch_async(dispatch_get_main_queue(), ^{ @try { leavePlus(NO); } @catch (NSException *e) {} });
     return result;
 }
 %end
 
+static void rearm(void) {
+    BOOL was = sArmed;
+    sArmed = MRGAddonInstalled(kAddon);
+    if (was && !sArmed && sPlus) leavePlus(NO);
+}
+
 %ctor {
     MRGAddonRegister([MRGShuffleAddon new]);
     if (NSClassFromString(@"SPTEsperantoPlayer")) %init;
-    [NSNotificationCenter.defaultCenter addObserverForName:MRGPlayerTrackChangedNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
+    %init(MRGShuffleButton);
+    dispatch_async(dispatch_get_main_queue(), ^{ rearm(); });
+    NSNotificationCenter *nc = NSNotificationCenter.defaultCenter;
+    [nc addObserverForName:MRGSettingsChangedNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) { rearm(); }];
+    [nc addObserverForName:MRGPlayerTrackChangedNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
         remember(n.userInfo[@"uri"]);
+        // Something else started playing: Shuffle+ belonged to the playlist it was turned on for.
+        if (sPlus && ![sPlusContext isEqualToString:MRGPlayerContextURI() ?: @""]) setPlus(NO, nil);
     }];
-    [NSNotificationCenter.defaultCenter addObserverForName:MRGPlayerShuffleOffNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
-        @try { takeBackQueue(); } @catch (NSException *e) {}
-    }];
-    [NSNotificationCenter.defaultCenter addObserverForName:MRGPlayerShuffleOnNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
-        if (!MRGAddonInstalled(kAddon)) return;
+    [nc addObserverForName:MRGPlayerShuffleOffNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
         NSString *context = [n.userInfo[@"context"] isKindOfClass:NSString.class] ? n.userInfo[@"context"] : MRGPlayerContextURI();
-        if ([context hasPrefix:@"spotify:playlist:"] || [context hasPrefix:@"spotify:album:"]) {
-            @try { applyShuffle(context); } @catch (NSException *e) { MRGDJLog(@"shuffle+: threw %@", e.reason); }
-        }
+        @try { shuffleWentOff(context); } @catch (NSException *e) {}
     }];
 }

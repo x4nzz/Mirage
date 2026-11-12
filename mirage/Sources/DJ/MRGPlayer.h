@@ -19,6 +19,8 @@ NSDictionary<NSString *, NSString *> *MRGSpotifyHeaders(void);
 
 BOOL MRGPlayerIsPlaying(void);       // a track on, not paused
 NSString *MRGPlayerContextURI(void);   // what the player is playing from (spotify:playlist:…), or nil
+int MRGPlayerShuffleState(void);        // 1 on, 0 off, -1 not reported yet
+BOOL MRGPlayerSetShuffle(BOOL on);      // Spotify's own setShufflingContext: on the playing player; NO when not possible
 
 // Plays a context by URI (a playlist, album or track) as Spotify's own Play buttons do, starting at `startTrack` when
 // given (sent again without it when that is refused). `done` says whether the player took the command, not that sound

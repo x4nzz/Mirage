@@ -481,6 +481,19 @@ static id playingPlayer(void) {
     return best;
 }
 
+// Shuffle as the player last reported it: 1 on, 0 off, -1 not seen yet.
+int MRGPlayerShuffleState(void) { return sg_lastShuffle; }
+
+// Turns shuffle on or off on the player that is playing (the call Spotify's own shuffle makes). NO when there is
+// no player or it doesn't answer setShufflingContext:.
+BOOL MRGPlayerSetShuffle(BOOL on) {
+    id player = playingPlayer();
+    if (![player respondsToSelector:@selector(setShufflingContext:)]) return NO;
+    @try { ((id (*)(id, SEL, BOOL))objc_msgSend)(player, @selector(setShufflingContext:), on); }
+    @catch (NSException *e) { MRGDJLog(@"player: setShufflingContext threw %@", e.reason); return NO; }
+    return YES;
+}
+
 // The origin the player makes for itself (its own feature identifier), as Spotify's pages do.
 static id originFor(id player, NSString *viewURI) {
     NSURL *view = viewURI ? [NSURL URLWithString:viewURI] : nil;
