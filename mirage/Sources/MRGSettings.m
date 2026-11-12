@@ -14,6 +14,7 @@
 #import "MRGAddons.h"
 #import "Addons/MRGSaver.h"
 #import "Addons/MRGAddonArt.h"
+#import "MRGIntegrity.h"
 #import <PhotosUI/PhotosUI.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <objc/runtime.h>
@@ -206,7 +207,7 @@ static const CGFloat kBottomChrome = 150;
         case MRGSecShop: return 1;
         case MRGSecDJ: return 1;
         case MRGSecSaver: return 1;
-        case MRGSecAbout: return 2;
+        case MRGSecAbout: return MRGDuplicateSummary() ? 4 : 3;
     }
     return 0;
 }
@@ -247,7 +248,10 @@ static const CGFloat kBottomChrome = 150;
         case MRGSecSaver: return @"Every change saves itself right away. Here you can export or import all Mirage settings, or keep named presets on this iPhone. API keys are never included.";
         case MRGSecDJ:
             return @"Voice, personality, provider, chat and the DJ's other settings are on the AI DJ page. Bring your own key: OpenAI, Gemini (Google AI Studio keys, AQ.… or AIza…), Anthropic, OpenRouter, Groq, xAI, Perplexity, Cerebras, Fireworks, Together, DeepSeek or Mistral. The key stays in this phone's keychain. Privacy: only track and artist names (what's playing, what you played, the queue around it), what you type, and answers from your on-phone listening history that a chat question needs are sent to your provider. Voice: iPhone voices, your provider's voices, or ElevenLabs with its own key. On Spotify Free, Spotify may shuffle the set and its skip limit still applies.";
-        case MRGSecAbout: return @"Mirage is free software under the GPL-3.0, built on Vitrine (github.com/meownyaaa/vitrine), itself a fork of Chroma by skopevoj (spoti.pw, up to v0.21.1).";
+        case MRGSecAbout:
+            if (MRGDuplicateSummary())
+                return [NSString stringWithFormat:@"Another copy of Mirage is loaded: %@. It runs next to this one and can show its own, older settings. Remove it (an injected Mirage.dylib or .deb in your signer, or a tweak folder) and install the IPA alone.\n\nMirage is free software under the GPL-3.0, built on Vitrine (github.com/meownyaaa/vitrine), itself a fork of Chroma by skopevoj (spoti.pw, up to v0.21.1).", MRGDuplicateSummary()];
+            return @"Mirage is free software under the GPL-3.0, built on Vitrine (github.com/meownyaaa/vitrine), itself a fork of Chroma by skopevoj (spoti.pw, up to v0.21.1).";
     }
     return nil;
 }
@@ -735,11 +739,19 @@ static NSString *ip3(NSInteger row) { return row == 3 ? @"Voice" : row == 4 ? @"
         }
         case MRGSecAbout: {
             UITableViewCell *c = baseCell();
-            c.textLabel.text = ip.row == 0 ? @"Version" : @"Vitrine";
+            NSString *uuid = MRGImageUUID();
+            NSArray *titles = @[@"Version", @"Running from", @"Vitrine", @"Another Mirage"];
+            NSArray *values = @[MRGVersionLine(),
+                                [NSString stringWithFormat:@"%@ · %@", MRGImagePath().lastPathComponent, uuid.length >= 8 ? [uuid substringToIndex:8] : @"?"],
+                                NSClassFromString(@"SGModSettingsRow") ? @"Loaded" : @"Not loaded",
+                                MRGDuplicateSummary() ?: @""];
+            if (ip.row >= (NSInteger)titles.count) return c;
+            c.textLabel.text = titles[ip.row];
             c.detailTextLabel.adjustsFontSizeToFitWidth = YES;
-            c.detailTextLabel.minimumScaleFactor = 0.75;
-            c.detailTextLabel.text = ip.row == 0 ? MRGVersionLine() : (NSClassFromString(@"SGModSettingsRow") ? @"Loaded" : @"Not loaded");
-            c.detailTextLabel.textColor = UIColor.grayColor;
+            c.detailTextLabel.minimumScaleFactor = 0.6;
+            c.detailTextLabel.text = values[ip.row];
+            c.detailTextLabel.textColor = ip.row == 3 ? UIColor.systemRedColor : UIColor.grayColor;
+            if (ip.row == 3) c.textLabel.textColor = UIColor.systemRedColor;
             return c;
         }
     }

@@ -142,6 +142,14 @@ static void placeRow(UICollectionView *list) {
     MRGDrawerRow *row = objc_getAssociatedObject(list, &kRowKey);
     if (!row) return;
     if (row.superview != list) [list addSubview:row];
+    // Another copy of Mirage (an older Mirage.dylib injected next to this one) puts its own row in the same spot,
+    // and that row opens the old settings. This copy's row stays on top and the other one is hidden.
+    BOOL other = NO;
+    for (UIView *v in list.subviews) {
+        if (v == row || object_getClass(v) == MRGDrawerRow.class) continue;
+        if ([NSStringFromClass(object_getClass(v)) isEqualToString:@"MRGDrawerRow"]) { other = YES; if (!v.hidden) v.hidden = YES; }
+    }
+    if (other && list.subviews.lastObject != row) [list bringSubviewToFront:row];
     UIView *vitrine = vitrineRowIn(list);
     [row adoptFontFrom:list vitrineRow:vitrine];
     CGRect frame = CGRectMake(0, -kRowHeight, list.bounds.size.width, kRowHeight);
