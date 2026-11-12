@@ -2,6 +2,7 @@
 #import "MRGPrefs.h"
 #import "MRGSafe.h"
 #import "MRGDJLog.h"
+#import "MRGDiagnostics.h"
 #import "Addons/MRGAddonArt.h"
 
 static NSUserDefaults *D(void) { return NSUserDefaults.standardUserDefaults; }
@@ -19,6 +20,9 @@ void MRGAddonSetInstalled(NSString *addonID, BOOL on) {
     [D() setBool:on forKey:[@"mirage.addon." stringByAppendingString:addonID]];
     if (on) MRGAddonClearCrashNotice(addonID);
     MRGDJLog(@"addons: %@ %@", addonID, on ? @"installed" : @"removed");
+    // In the breadcrumbs too (they outlive the DJ log): 0.6.7's diagnostics showed Cover ring on at 15:51 and gone
+    // later with nothing saying when or how.
+    MRGCrumb(@"%@ %@", on ? @"install" : @"remove", addonID);
     if (on) MRGAddonRunEnable(addonID);
     else MRGAddonRunDisable(addonID);
     MRGPostChange();
