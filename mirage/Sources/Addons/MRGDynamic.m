@@ -1,8 +1,10 @@
 // Dynamic colors: a palette from the current cover, cached per track, blended into Mirage's accent,
-// toggles and Vitrine's glass. The previous color stays up until the new one is ready, so a track
-// change doesn't flash. Work is a 24×24 downsample off the main thread, once per track.
+// toggles and Vitrine's glass. The previous color stays up until the new one is ready, then fades to it.
+// 0.6.7: the cover's vibrant color (else its dominant one) from MRGPalette, lifted to read on black; a 32x32
+// downsample off the main thread, once per track.
 #import "Addons/MRGAddon.h"
 #import "Addons/MRGThemes.h"
+#import "Addons/MRGPalette.h"
 #import "MRGAddons.h"
 #import "MRGPlayer.h"
 #import "MRGPrefs.h"
@@ -60,7 +62,7 @@ static NSURL *cacheFile(void) {
     NSURL *lib = [NSFileManager.defaultManager URLsForDirectory:NSLibraryDirectory inDomains:NSUserDomainMask].firstObject;
     NSURL *dir = [lib URLByAppendingPathComponent:@"Mirage" isDirectory:YES];
     [NSFileManager.defaultManager createDirectoryAtURL:dir withIntermediateDirectories:YES attributes:nil error:nil];
-    return [dir URLByAppendingPathComponent:@"dynamic-colors.plist"];
+    return [dir URLByAppendingPathComponent:@"dynamic-colors-2.plist"];   // 0.6.7: new palette, new cache
 }
 
 static void loadDisk(void) {
@@ -102,34 +104,9 @@ static void store(NSString *uri, NSInteger rgb) {
     saveDiskSoon();
 }
 
-// Most common saturated color in a 24×24 downsample. -1 when the picture is too flat to use.
-// Core Graphics only (no UIKit drawing), so it runs on a background queue; the decode of the downloaded cover happens
-// here too, not on the main thread.
 static NSInteger paletteFrom(UIImage *image) {
-    CGImageRef cg = image.CGImage;
-    if (!cg) return -1;
-    CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
-    UInt8 pixels[24 * 24 * 4];
-    CGContextRef ctx = CGBitmapContextCreate(pixels, 24, 24, 8, 24 * 4, space, kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
-    CGColorSpaceRelease(space);
-    if (!ctx) return -1;
-    CGContextDrawImage(ctx, CGRectMake(0, 0, 24, 24), cg);
-    CGContextRelease(ctx);
-    NSMutableDictionary<NSNumber *, NSNumber *> *buckets = [NSMutableDictionary dictionary];
-    for (int i = 0; i < 24 * 24; i++) {
-        int r = pixels[i * 4], g = pixels[i * 4 + 1], b = pixels[i * 4 + 2];
-        double maxv = MAX(r, MAX(g, b)) / 255.0, minv = MIN(r, MIN(g, b)) / 255.0;
-        double l = (maxv + minv) / 2, sat = maxv == minv ? 0 : (maxv - minv) / (1 - fabs(2 * l - 1));
-        if (l < 0.08 || l > 0.94 || sat < 0.18) continue;
-        NSInteger key = ((r & 0xF0) << 8) | ((g & 0xF0) << 4) | (b & 0xF0);
-        buckets[@(key)] = @(buckets[@(key)].integerValue + 1);
-    }
-    NSInteger best = -1, bestScore = 0;
-    for (NSNumber *key in buckets) {
-        NSInteger count = buckets[key].integerValue;
-        if (count > bestScore) { bestScore = count; best = key.integerValue | 0x0F0F0F; }
-    }
-    return bestScore >= 4 ? best : -1;
+    if (!image) return -1;
+    return MRGPaletteAccent(MRGPaletteFromImage(image));
 }
 
 static UIImage *coverOnScreen(void) {
@@ -157,12 +134,27 @@ static UIImage *coverOnScreen(void) {
     return best;
 }
 
+// A new color fades in over about 0.4s (four repaints), not in one jump; at once in Low Power Mode, with Reduce
+// Motion, or the first time.
+static NSUInteger sFade;
 static void applyColor(NSInteger extracted, NSString *uri) {
     NSInteger next = blended(extracted);
-    BOOL changed = next != sColor;
-    sColor = next;
+    NSInteger from = sColor;
     sTrack = [uri copy];
-    if (changed && MRGAddonInstalled(kAddon)) MRGLookRefresh();
+    if (next == from) return;
+    NSUInteger fade = ++sFade;
+    if (from < 0 || NSProcessInfo.processInfo.isLowPowerModeEnabled || UIAccessibilityIsReduceMotionEnabled()) {
+        sColor = next;
+        if (MRGAddonInstalled(kAddon)) MRGLookRefresh();
+        return;
+    }
+    for (int step = 1; step <= 4; step++) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((step - 1) * 0.11 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (fade != sFade || !MRGAddonInstalled(kAddon)) return;
+            sColor = step == 4 ? next : blend(from, next, step / 4.0);
+            MRGLookRefresh();
+        });
+    }
 }
 
 static void resolve(NSDictionary *now) {

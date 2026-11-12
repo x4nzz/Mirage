@@ -10,6 +10,7 @@
 // Tapping the shelf opens the player through Spotify's own now playing bar.
 #import "Addons/MRGPopupLyrics.h"
 #import "Addons/MRGAddon.h"
+#import "Addons/MRGPalette.h"
 #import "MRGAddons.h"
 #import "MRGPlayer.h"
 #import "MRGPrefs.h"
@@ -53,6 +54,8 @@ static CGFloat frost(void) { return MIN(1, MAX(0, MRGAddonNumber(kAddon, @"frost
 static CGFloat tintAmount(void) { return MIN(0.5, MAX(0, MRGAddonNumber(kAddon, @"tint", 0.10))); }
 
 // 0.6.7: how the lines light up. 0 line by line (Spotify), 1 word by word (Apple Music).
+// 0.6.7: the card's tint from the accent (0) or the playing song's cover (1).
+static BOOL coverColors(void) { return MRGAddonInteger(kAddon, @"colors", 0) == 1; }
 static BOOL wordSync(void) { return MRGAddonInteger(kAddon, @"style", 0) == 1; }
 static NSInteger linesShown(void) { return MIN(5, MAX(3, MRGAddonInteger(kAddon, @"lines", 4))); }
 static BOOL lowPower(void) { return NSProcessInfo.processInfo.isLowPowerModeEnabled; }
@@ -233,12 +236,16 @@ static void shadowText(UILabel *l) {
     NSString *_swept;       // the last sweep drawn on the active line (a signature), so an unchanged one isn't redrawn
     NSInteger _sweptLine;
     BOOL _estimated;        // the active line's words are spread across it, not timed by the source
+    NSInteger _coverRGB;    // the cover's color for the card, -1 when none (or the accent is used)
+    NSString *_coverFor;
+    BOOL _darkInk;          // the tint is bright enough that dark text reads better than white
 }
 
 - (instancetype)initWithFrame:(CGRect)frame {
     if (!(self = [super initWithFrame:frame])) return nil;
     _active = NSIntegerMin;
     _sweptLine = -1;
+    _coverRGB = -1;
     _labels = [NSMutableArray array];
     self.layer.cornerRadius = 22;
     self.layer.cornerCurve = kCACornerCurveContinuous;
@@ -342,7 +349,7 @@ static void shadowText(UILabel *l) {
     [CATransaction commit];
     CGFloat pad = 16;
     _icon.frame = CGRectMake(pad, 14, 22, 22);
-    _icon.tintColor = MRGAccent();
+    _icon.tintColor = coverColors() && _coverRGB >= 0 ? [self ink] : MRGAccent();
     [_kicker sizeToFit];
     _kicker.frame = CGRectMake(CGRectGetMaxX(_icon.frame) + 8, 14, _kicker.bounds.size.width, 22);
     _open.frame = CGRectMake(b.size.width - pad - 22, 14, 22, 22);
@@ -365,7 +372,54 @@ static void shadowText(UILabel *l) {
 }
 
 // What should be up: the lines of the playing song, or nothing (the section closes).
-- (UIColor *)tintColorNow { return MRGAccent(); }
+- (UIColor *)tintColorNow { return coverColors() && _coverRGB >= 0 ? MRGColorFromRGB(_coverRGB) : MRGAccent(); }
+
+- (UIColor *)ink { return _darkInk ? [UIColor colorWithWhite:0.07 alpha:1] : UIColor.whiteColor; }
+
+// The cover's color for this song, fetched once per song; the card fades to it.
+- (void)refreshCoverColor {
+    if (!coverColors()) { if (_coverRGB >= 0) { _coverRGB = -1; _coverFor = nil; [self applyGlassAnimated:YES]; } return; }
+    NSString *uri = MRGNowPlaying()[@"uri"];
+    if (!uri.length || [uri isEqualToString:_coverFor]) return;
+    _coverFor = [uri copy];
+    __weak MRGLyricsShelf *weak = self;
+    MRGPaletteForNowPlaying(^(NSString *forURI, MRGPalette palette) {
+        MRGLyricsShelf *s = weak;
+        if (!s || ![forURI isEqualToString:s->_coverFor]) return;
+        NSInteger rgb = MRGPaletteAccent(palette);
+        if (rgb < 0) { s->_coverFor = nil; return; }   // no cover yet: try again on the next refresh
+        s->_coverRGB = rgb;
+        [s applyGlassAnimated:YES];
+    });
+}
+
+// Text stays readable: over the tint as it shows on a dark background, white needs 4.5:1, else the text goes dark.
+- (void)applyInk {
+    BOOL dark = NO;
+    CGFloat t = tintAmount();
+    UIColor *c = [self tintColorNow];
+    CGFloat r = 0, g = 0, b = 0, a = 0;
+    if ([c getRed:&r green:&g blue:&b alpha:&a]) {
+        CGFloat k = MIN(0.55, t * 1.1) + MIN(0.5, t) * 0.35;   // the wash plus the sheen over it, roughly
+        NSInteger bg = ((NSInteger)lround((0.1 + (r - 0.1) * k) * 255) << 16) | ((NSInteger)lround((0.1 + (g - 0.1) * k) * 255) << 8) | (NSInteger)lround((0.1 + (b - 0.1) * k) * 255);
+        dark = MRGContrast(0xFFFFFF, bg) < 4.5 && MRGContrast(0x121212, bg) > MRGContrast(0xFFFFFF, bg);
+    }
+    if (dark == _darkInk && _kicker.textColor) return;
+    _darkInk = dark;
+    UIColor *ink = [self ink];
+    for (UILabel *l in [@[_kicker, _song] arrayByAddingObjectsFromArray:_labels]) {
+        if (!l.attributedText.length || l == _kicker || l == _song) l.textColor = l == _song ? [ink colorWithAlphaComponent:0.75] : ink;
+        l.layer.shadowOpacity = dark ? 0 : 0.45;
+    }
+    _open.tintColor = [ink colorWithAlphaComponent:0.6];
+    _swept = nil;   // the swept line redraws in the new ink
+}
+
+- (void)applyGlassAnimated:(BOOL)animated {
+    if (animated && self.window && !lowPower() && !UIAccessibilityIsReduceMotionEnabled())
+        [UIView animateWithDuration:0.5 delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:^{ [self applyGlass]; [self layoutIfNeeded]; } completion:nil];
+    else [self applyGlass];
+}
 
 // Clarity and tint, live. 0.6.7 root cause of "the sliders change nothing": on iOS 26 the card is real glass, and
 // 0.6.6 only swapped the glass style when Clarity crossed the middle (the fade it did is skipped for real glass), and
@@ -399,11 +453,13 @@ static void shadowText(UILabel *l) {
     _frost.alpha = _liquid ? f : 0;
     _glass.alpha = _liquid ? 1 : 0.12 + 0.88 * f;
     _wash.backgroundColor = [color colorWithAlphaComponent:MIN(0.55, t * 1.1)];
+    [self applyInk];
     [self setNeedsLayout];
 }
 
 - (void)changed {
     @try {
+        [self refreshCoverColor];
         [self applyGlass];
         resolveSymbols();
         NSDictionary *playing = MRGNowPlaying();
@@ -469,9 +525,10 @@ static void shadowText(UILabel *l) {
         UILabel *l = [UILabel new];
         l.text = text.length ? text : @"♪";
         l.font = font;
-        l.textColor = UIColor.whiteColor;
+        l.textColor = [self ink];
         l.numberOfLines = 0;
         shadowText(l);
+        if (_darkInk) l.layer.shadowOpacity = 0;
         CGFloat h = ceil([l sizeThatFits:CGSizeMake(w, CGFLOAT_MAX)].height);
         // Scaled about the leading edge, so a dimmed line stays aligned with the active one.
         l.layer.anchorPoint = CGPointMake(0, 0.5);
@@ -547,7 +604,7 @@ static NSArray<NSDictionary *> *wordsOf(id line, NSInteger lineEnd, BOOL *timed)
     // The line that was swept before goes back to plain text.
     if (_sweptLine >= 0 && _sweptLine < (NSInteger)_labels.count && (!want || _sweptLine != _active)) {
         UILabel *old = _labels[_sweptLine];
-        if (old.attributedText.length) { NSString *plain = old.attributedText.string; old.attributedText = nil; old.text = plain; old.textColor = UIColor.whiteColor; }
+        if (old.attributedText.length) { NSString *plain = old.attributedText.string; old.attributedText = nil; old.text = plain; old.textColor = [self ink]; }
         _sweptLine = -1;
         _swept = nil;
     }
@@ -575,7 +632,7 @@ static NSArray<NSDictionary *> *wordsOf(id line, NSInteger lineEnd, BOOL *timed)
                     NSString *piece = words[i][@"text"];
                     if (i > 0 && ![words[i][@"joined"] boolValue]) [text appendAttributedString:[[NSAttributedString alloc] initWithString:@" " attributes:@{NSFontAttributeName: font}]];
                     CGFloat lit = 0.38 + 0.62 * [levels[i] integerValue] / 8.0;
-                    [text appendAttributedString:[[NSAttributedString alloc] initWithString:piece attributes:@{NSFontAttributeName: font, NSForegroundColorAttributeName: [UIColor colorWithWhite:1 alpha:lit]}]];
+                    [text appendAttributedString:[[NSAttributedString alloc] initWithString:piece attributes:@{NSFontAttributeName: font, NSForegroundColorAttributeName: [[self ink] colorWithAlphaComponent:lit]}]];
                 }
                 l.attributedText = text;
                 _swept = [sig copy];
@@ -769,9 +826,11 @@ void MRGPopupPlace(UIView *page) {
     clarity.live = YES;
     MRGAddonSetting *tint = [MRGAddonSetting slider:@"tint" title:@"Tint" min:0 max:0.5 fallback:0.10];
     tint.live = YES;
+    MRGAddonSetting *colors = [MRGAddonSetting picker:@"colors" title:@"Colors" options:@[@"Accent", @"Cover art"] values:@[@0, @1] fallback:@0];
+    colors.footer = @"Cover art tints the card with the playing song's cover. The text turns dark when the tint is bright.";
     MRGAddonSetting *style = [MRGAddonSetting picker:@"style" title:@"Sync" options:@[@"Line by line", @"Word by word"] values:@[@0, @1] fallback:@0];
     style.footer = @"Word by word uses the source's word timings. When it only times lines, the words are spread across the line as an estimate, and the header shows LYRICS ≈.";
-    return @[size, lines, style, clarity, tint];
+    return @[size, lines, style, colors, clarity, tint];
 }
 // On or off takes effect on Home right away: every Home page seen gets its shelf (or loses its room).
 static void relayoutHome(void) {
