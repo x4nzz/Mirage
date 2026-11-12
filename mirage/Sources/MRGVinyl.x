@@ -42,6 +42,8 @@
 static NSInteger recordColor(void) { return [NSUserDefaults.standardUserDefaults integerForKey:@"mirage.addon.vinyl.color"]; }
 static NSInteger sleeveStyle(void) { return [NSUserDefaults.standardUserDefaults integerForKey:@"mirage.addon.vinyl.sleeve"]; }
 static BOOL followBPM(void) { return [NSUserDefaults.standardUserDefaults boolForKey:@"mirage.addon.vinyl.bpm"]; }
+static NSInteger labelStyle(void) { return [NSUserDefaults.standardUserDefaults integerForKey:@"mirage.addon.vinyl.label"]; }   // 0 cover, 1 plain
+static BOOL shine(void) { id v = [NSUserDefaults.standardUserDefaults objectForKey:@"mirage.addon.vinyl.shine"]; return [v isKindOfClass:NSNumber.class] ? [v boolValue] : YES; }
 static double sTempo;            // the playing song's BPM, 0 when unknown
 static NSString *sTempoFor;
 static double turnSeconds(void) {
@@ -49,7 +51,13 @@ static double turnSeconds(void) {
     return MRGVinylSecondsPerTurn();
 }
 
-static const CGFloat kPeek = 0.20;          // how much record shows past the sleeve, of the sleeve's width
+// How much record shows past the sleeve, of the sleeve's width (0.6.7: a setting, Less / Normal / More).
+static CGFloat peekAmount(void) {
+    id v = [NSUserDefaults.standardUserDefaults objectForKey:@"mirage.addon.vinyl.peek"];
+    double p = [v isKindOfClass:NSNumber.class] ? [v doubleValue] : 0.20;
+    return MIN(0.32, MAX(0.10, p));
+}
+#define kPeek peekAmount()
 static const CGFloat kMargin = 12;          // the piece's side margin on screen
 static const CGFloat kMinCover = 0.55;      // the sleeve never gets smaller than this, of the tilt view's size
 static const CGFloat kDisc = 0.92;          // the record's diameter, of the sleeve's width
@@ -291,6 +299,11 @@ static void logState(NSString *state) {
 
 - (void)settingsChanged {
     [self applyColors:NO];
+    [self applyLabel];
+    _sheen.hidden = !shine();
+    // 0.6.7: turning BPM on fetches the playing song's tempo now (0.6.6 waited for the next song).
+    NSString *playing = MRGNowPlaying()[@"uri"];
+    if (followBPM() && playing.length && ![sTempoFor isEqualToString:playing]) { dispatch_async(dispatch_get_main_queue(), ^{ [self fetchTempo]; }); }
     double turn = turnSeconds();
     if (fabs(turn - _turn) > 0.01) {
         _turn = turn;
@@ -325,6 +338,22 @@ static void logState(NSString *state) {
     [self settingsChanged];
 }
 
+// The label: the cover art, or plain (the record's own tint, a ring and the hole), like a white-label pressing.
+- (void)applyLabel {
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    if (labelStyle() == 1) {
+        _label.contents = nil;
+        UIColor *c = recordColor() == 4 ? [UIColor colorWithWhite:0.15 alpha:1] : recordColor() == 0 ? [UIColor colorWithWhite:0.93 alpha:1] : MRGAccent();
+        if (recordColor() == 1 && _colorImage) c = MRGNowVividColor(_colorImage) ?: c;
+        _label.backgroundColor = c.CGColor;
+    } else {
+        _label.backgroundColor = MRGAccent().CGColor;
+        if (_shownImage.CGImage) _label.contents = (__bridge id)_shownImage.CGImage;
+    }
+    [CATransaction commit];
+}
+
 // The record's colors: 0 black, 1 the cover's, 2 the accent, 3 clear red, 4 white.
 static UIColor *shade(UIColor *c, CGFloat brightness, CGFloat alpha) {
     CGFloat h, sat, b, a;
@@ -344,7 +373,11 @@ static UIColor *shade(UIColor *c, CGFloat brightness, CGFloat alpha) {
     } else if (mode == 2) tint = MRGAccent();
     _colorMode = recordColor();
     [CATransaction begin];
-    [CATransaction setAnimationDuration:0.6];
+    // 0.6.7 root cause of "record color changes nothing": these layers are inside the disc, whose speed is 0 whenever
+    // the record stands still (paused, Low Power Mode). An implicit animation added to them then never runs, so the
+    // record kept showing its old colors. A still record now changes at once; a spinning one fades over 0.6s.
+    if (_spinning && _disc.speed > 0) [CATransaction setAnimationDuration:0.6];
+    else [CATransaction setDisableActions:YES];
     UIColor *groove = [UIColor colorWithWhite:1 alpha:0.07], *ring = [UIColor colorWithWhite:0 alpha:0.85], *rim = [UIColor colorWithWhite:1 alpha:0.16];
     NSArray *base;
     UIColor *lit = [UIColor colorWithWhite:1 alpha:0.20], *soft = [UIColor colorWithWhite:1 alpha:0.09];
@@ -474,8 +507,9 @@ static UIView *coverIn(UIView *tilt) {
         UIImage *img = coverImage([self trackedCover] ?: self.tilt, 0);
         if (img && img != _shownImage && img.CGImage) {
             _shownImage = img;
-            _label.contents = (__bridge id)img.CGImage;
+            _label.contents = labelStyle() == 1 ? nil : (__bridge id)img.CGImage;
             [self applyColors:YES];
+            [self applyLabel];
         } else if (_colorMode < 0) [self applyColors:NO]; else if (!img && !_label.contents) {
             NSDictionary *now = MRGNowPlaying();
             NSString *url = [now[@"image"] isKindOfClass:NSString.class] ? now[@"image"] : nil;
@@ -484,7 +518,7 @@ static UIView *coverIn(UIView *tilt) {
                 __weak MRGVinylView *weak = self;
                 [[NSURLSession.sharedSession dataTaskWithURL:[NSURL URLWithString:url] completionHandler:^(NSData *data, NSURLResponse *r, NSError *e) {
                     UIImage *got = data.length ? [UIImage imageWithData:data] : nil;
-                    if (got) dispatch_async(dispatch_get_main_queue(), ^{ MRGVinylView *s = weak; if (s && !s->_shownImage) s->_label.contents = (__bridge id)got.CGImage; });
+                    if (got) dispatch_async(dispatch_get_main_queue(), ^{ MRGVinylView *s = weak; if (s && !s->_shownImage && labelStyle() != 1) s->_label.contents = (__bridge id)got.CGImage; });
                 }] resume];
             }
         }
@@ -547,7 +581,7 @@ static UIView *coverIn(UIView *tilt) {
     CGFloat side = MIN(b.size.width, b.size.height);
     if (_style == 1) {
         _gloss.hidden = NO;
-        _gloss.colors = @[(id)[UIColor colorWithWhite:1 alpha:0.30].CGColor, (id)[UIColor colorWithWhite:1 alpha:0.06].CGColor, (id)[UIColor colorWithWhite:1 alpha:0].CGColor, (id)[UIColor colorWithWhite:1 alpha:0.0].CGColor, (id)[UIColor colorWithWhite:1 alpha:0.08].CGColor];
+        _gloss.colors = @[(id)[UIColor colorWithWhite:1 alpha:0.42].CGColor, (id)[UIColor colorWithWhite:1 alpha:0.10].CGColor, (id)[UIColor colorWithWhite:1 alpha:0].CGColor, (id)[UIColor colorWithWhite:1 alpha:0.0].CGColor, (id)[UIColor colorWithWhite:1 alpha:0.08].CGColor];
         _gloss.locations = @[@0, @0.28, @0.42, @0.8, @1];
         _edge.hidden = NO;
         _edge.path = [UIBezierPath bezierPathWithRoundedRect:CGRectInset(b, 0.75, 0.75) cornerRadius:MAX(0, r - 0.75)].CGPath;
@@ -557,12 +591,12 @@ static UIView *coverIn(UIView *tilt) {
         _wear.hidden = NO;
         CGPoint c = CGPointMake(CGRectGetMidX(b) + _dir * side * 0.03, CGRectGetMidY(b));
         _wear.path = [UIBezierPath bezierPathWithArcCenter:c radius:side * 0.41 startAngle:0 endAngle:2 * M_PI clockwise:YES].CGPath;
-        _wear.strokeColor = [UIColor colorWithWhite:1 alpha:0.11].CGColor;
+        _wear.strokeColor = [UIColor colorWithWhite:1 alpha:0.22].CGColor;
         _wear.lineWidth = side * 0.035;
         _wear.lineDashPattern = @[@(side * 0.22), @(side * 0.03), @(side * 0.12), @(side * 0.05)];
         _edge.hidden = NO;
         _edge.path = [UIBezierPath bezierPathWithRoundedRect:CGRectInset(b, 1.5, 1.5) cornerRadius:MAX(0, r - 1.5)].CGPath;
-        _edge.strokeColor = [UIColor colorWithWhite:0.95 alpha:0.18].CGColor;
+        _edge.strokeColor = [UIColor colorWithWhite:0.95 alpha:0.32].CGColor;
         _edge.lineWidth = 3;
         _edge.lineDashPattern = @[@(side * 0.05), @(side * 0.012), @(side * 0.11), @(side * 0.02)];
         _crease.hidden = NO;
@@ -570,7 +604,7 @@ static UIView *coverIn(UIView *tilt) {
         [k moveToPoint:CGPointMake(b.size.width * 0.68, 0)];
         [k addQuadCurveToPoint:CGPointMake(b.size.width, b.size.height * 0.30) controlPoint:CGPointMake(b.size.width * 0.86, b.size.height * 0.12)];
         _crease.path = k.CGPath;
-        _crease.strokeColor = [UIColor colorWithWhite:1 alpha:0.09].CGColor;
+        _crease.strokeColor = [UIColor colorWithWhite:1 alpha:0.2].CGColor;
         _crease.lineWidth = 1.2;
     }
     [CATransaction commit];
@@ -788,8 +822,11 @@ static void relayAll(void) {
     MRGAddonSetting *color = [MRGAddonSetting picker:@"mirage.addon.vinyl.color" title:@"Record color" options:@[@"Black", @"From the cover", @"Accent", @"Clear red", @"White"] values:@[@0, @1, @2, @3, @4] fallback:@0];
     MRGAddonSetting *sleeve = [MRGAddonSetting picker:@"mirage.addon.vinyl.sleeve" title:@"Sleeve" options:@[@"Plain", @"Glossy", @"Worn"] values:@[@0, @1, @2] fallback:@0];
     MRGAddonSetting *bpm = [MRGAddonSetting toggle:@"mirage.addon.vinyl.bpm" title:@"Spin to the song's BPM" fallback:NO];
-    bpm.footer = @"Uses the speed above when Spotify doesn't give the BPM.";
-    return @[speed, bpm, side, color, sleeve];
+    bpm.footer = @"Spotify keeps a song's BPM from many apps; when it does, the record turns at the speed above.";
+    MRGAddonSetting *peek = [MRGAddonSetting picker:@"mirage.addon.vinyl.peek" title:@"Record showing" options:@[@"Less", @"Normal", @"More"] values:@[@0.12, @0.20, @0.30] fallback:@0.20];
+    MRGAddonSetting *label = [MRGAddonSetting picker:@"mirage.addon.vinyl.label" title:@"Label" options:@[@"Album art", @"Plain"] values:@[@0, @1] fallback:@0];
+    MRGAddonSetting *gleam = [MRGAddonSetting toggle:@"mirage.addon.vinyl.shine" title:@"Light on the record" fallback:YES];
+    return @[speed, bpm, side, peek, color, label, sleeve, gleam];
 }
 - (void)addonDidEnable {}
 - (void)addonDidDisable {}
@@ -807,7 +844,7 @@ static void relayAll(void) {
         %init(MRGVinylHooks);
         [NSNotificationCenter.defaultCenter addObserverForName:MRGSettingsChangedNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
             static NSString *last;
-            NSString *now = [NSString stringWithFormat:@"%d%d%ld", MRGAddonInstalled(@"vinyl"), MRGVinylOnLeft(), (long)sleeveStyle()];
+            NSString *now = [NSString stringWithFormat:@"%d%d%ld%.2f", MRGAddonInstalled(@"vinyl"), MRGVinylOnLeft(), (long)sleeveStyle(), peekAmount()];
             if ([now isEqualToString:last]) return;   // another setting: nothing to move
             last = now;
             sg_glideUntil = CACurrentMediaTime() + 0.6;
