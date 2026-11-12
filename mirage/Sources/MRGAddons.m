@@ -307,6 +307,7 @@ static BOOL addonHasSettings(NSDictionary *a) {
     NSArray<NSDictionary *> *_addons;
     NSString *_note;
     BOOL _changing, _reloadQueued;
+    CFTimeInterval _ownChangeAt;
 }
 
 - (instancetype)init { return [super initWithStyle:UITableViewStyleInsetGrouped]; }
@@ -340,7 +341,9 @@ static BOOL addonHasSettings(NSDictionary *a) {
     _reloadQueued = YES;
     dispatch_async(dispatch_get_main_queue(), ^{
         self->_reloadQueued = NO;
-        if (self->_changing) return;
+        // The change notification arrives a moment after a switch here (it is coalesced): that one is our own, and the
+        // rows were already updated in place, so the table isn't reloaded under the switch's animation.
+        if (self->_changing || CACurrentMediaTime() - self->_ownChangeAt < 0.6) return;
         self->_addons = MRGAddonIndex();
         [self updateCount];
         [self.tableView reloadData];
@@ -467,6 +470,7 @@ static BOOL addonHasSettings(NSDictionary *a) {
 - (void)setAddon:(NSString *)addonID on:(BOOL)on card:(MRGAddonCard *)card {
     if (!addonID.length) return;
     _changing = YES;
+    _ownChangeAt = CACurrentMediaTime();
     @try { MRGAddonSetInstalled(addonID, on); } @catch (NSException *e) { MRGDJLog(@"addons: switching %@ threw %@", addonID, e.reason); }
     _changing = NO;
     [card refreshState];

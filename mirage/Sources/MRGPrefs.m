@@ -6,11 +6,23 @@ static NSUserDefaults *D(void) { return NSUserDefaults.standardUserDefaults; }
 // Typed: a stored value of another type (a string, an array) is ignored and the default used.
 static id V(NSString *k, id def) { id v = [D() objectForKey:k]; return [v isKindOfClass:NSNumber.class] ? v : def; }
 
+// One notification for a burst of changes. A slider drag, a preset or a settings file sets many values in a row, and
+// every MRGSettingsChangedNotification relays out every page with a background, re-places the DJ chip, the Trash
+// button, the Vinyl record and the lyrics shelf and schedules the autosave. Before 0.6.4 each change also called
+// -synchronize on the main thread (a round trip to cfprefsd); the defaults are written by the system and by the
+// autosave (MRGSaver.m), so a change still survives Spotify being closed right after.
+static BOOL sPostQueued;
 void MRGPostChange(void) {
-    // Written through to disk now, not whenever the system gets to it, so a change survives Spotify being closed right after.
-    [D() synchronize];
-    void (^post)(void) = ^{ [NSNotificationCenter.defaultCenter postNotificationName:MRGSettingsChangedNotification object:nil]; };
-    if (NSThread.isMainThread) post(); else dispatch_async(dispatch_get_main_queue(), post);
+    void (^queue)(void) = ^{
+        if (sPostQueued) return;
+        sPostQueued = YES;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            sPostQueued = NO;
+            @try { [NSNotificationCenter.defaultCenter postNotificationName:MRGSettingsChangedNotification object:nil]; }
+            @catch (NSException *e) {}
+        });
+    };
+    if (NSThread.isMainThread) queue(); else dispatch_async(dispatch_get_main_queue(), queue);
 }
 
 BOOL MRGBackgroundEnabled(void) { return [V(@"mirage.bg.enabled", @YES) boolValue]; }

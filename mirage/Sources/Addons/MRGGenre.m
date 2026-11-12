@@ -77,7 +77,8 @@ static NSString *joinGenres(NSArray *genres) {
 static void publish(NSString *text) {
     if ((!text.length && !sShowing.length) || [text isEqualToString:sShowing]) return;
     sShowing = [text copy];
-    MRGPostChange();
+    // Not a settings change: before 0.6.4 every song with genres posted MRGSettingsChangedNotification, which relaid
+    // out every page in the app (and saved the settings) on each track change of a playlist.
     Class page = NSClassFromString(@"_TtC21NowPlaying_ScrollImpl27NPVBackgroundViewController");
     for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
         if (![scene isKindOfClass:UIWindowScene.class]) continue;

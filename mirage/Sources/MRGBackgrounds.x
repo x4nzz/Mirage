@@ -816,7 +816,19 @@ static BOOL searchWanted(void) {
 #pragma mark - live updates
 
 
+static void relayoutAllNow(void);
+// At most one full pass every quarter second, however many changes come in (a slider drag sends one per step).
 static void relayoutAll(void) {
+    static BOOL queued;
+    if (queued) return;
+    queued = YES;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        queued = NO;
+        @try { relayoutAllNow(); } @catch (NSException *e) {}
+    });
+}
+
+static void relayoutAllNow(void) {
     // Ask every page that has (or could want) a background to lay out again; attach/detach runs there.
     for (UIWindowScene *scene in UIApplication.sharedApplication.connectedScenes) {
         if (![scene isKindOfClass:UIWindowScene.class]) continue;
